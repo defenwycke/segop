@@ -203,12 +203,13 @@ The logic is simple: include data, pay for data.
 
 ## 7 Implementation and Flag Structure
 
-Flag Bit / Meaning             / Present In	/ Cost Model
------------------------------------------------------------------------
-0x00     / Legacy (no witness) / Pre-SegWit / 4 WU/B
-0x01     / SegWit only         / Post-2017  / 1 WU witness
-0x02     / segOP only          / Future     / 4 WU segOP
-0x03     / SegWit + segOP      / Mixed      / 1 WU witness + 4 WU segOP
+| Flag Bit  | Meaning             | Present In  | Cost Model                  |
+|-----------|---------------------|-------------|-----------------------------|
+| 0x00      | Legacy (no witness) | Pre-SegWit  | 4 WU/B                      |
+| 0x01      | SegWit only         | Post-2017   | 1 WU witness                |
+| 0x02      | segOP only          | Future      | 4 WU segOP                  |
+| 0x03      | SegWit + segOP      | Mixed       | 1 WU witness + 4 WU segOP   |
+
 
 Older software ignores 0x02, so segOP deploys as a soft fork with zero disruption.
 
