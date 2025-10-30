@@ -162,7 +162,8 @@ Predictable propagation — smaller, uniform payloads reduce latency.
 
 It’s a market fix, not a ban list.
 
-## 6 Security and Consensus Considerations
+## 6 Security and Consensus 
+### 6.1 Considerations
 
 segOP changes accounting, not consensus.
 Validation logic stays deterministic; legacy nodes remain valid peers.
@@ -176,7 +177,7 @@ Validation logic stays deterministic; legacy nodes remain valid peers.
 | Replay risk             | Flag bit isolated from version                 |
 
 
-### 6.1 Validation Flow (pseudocode)
+### 6.2 Validation Flow (pseudocode)
 
 ```python
 
@@ -210,10 +211,10 @@ The logic is simple: include data, pay for data.
 | 0x02      | segOP only          | Future      | 4 WU segOP                  |
 | 0x03      | SegWit + segOP      | Mixed       | 1 WU witness + 4 WU segOP   |
 
-
 Older software ignores 0x02, so segOP deploys as a soft fork with zero disruption.
 
-## 8 Transaction Encoding Example (segOP Flag + P2SOP)
+## 8 Transaction Encoding 
+### 8.1 Example (segOP Flag + P2SOP)
 
 A working example showing how segOP coexists with SegWit, commented line-by-line.
 
@@ -279,12 +280,15 @@ A working example showing how segOP coexists with SegWit, commented line-by-line
 }
 ```
 
-Validation flow:
+### 8.2 Validation flow:
+
 1. Detect flag & 0x02.
 2. Reject if segop.length > 100 000.
 3. Weight = segop.length × 4.
 4. Witness elements ≤ 520 B.
 5. Fee = (base_vbytes + segop.length) × feerate.
+
+### 8.3 segOP Field definitions
 
 | Field     | Purpose               | Effect                   |
 |-----------|-----------------------|--------------------------|
@@ -321,11 +325,13 @@ The node remains consensus-equivalent but disk-light.
 
 ### 9.4 Policy Flags
 
--prunesegop=1
--prunesegopheight=2016
--prunewitness=1
--prunewitnessheight=2016
--keepsegopcommitments=1
+| Flag | Value | Description |
+|------|--------|-------------|
+| `-prunesegop` | 1 | Enable segOP pruning |
+| `-prunesegopheight` | 2016 | Start pruning after 2016 blocks |
+| `-prunewitness` | 1 | Enable witness pruning |
+| `-prunewitnessheight` | 2016 | Start pruning after 2016 blocks |
+| `-keepsegopcommitments` | 1 | Preserve segOP Merkle commitments |
 
 ### 9.5 Storage Projection
 
@@ -353,30 +359,31 @@ Heavy users pay for their data, and those who want to keep it can, while everyon
 Payloads may go, but commitments stay : block hashes still cover segOP roots, headers prove existence, archives can re-serve data verifiable by hash.
 
 ### 9.7 Data Retention Layers
+```
 ┌─────────────────────────────────────────────┐
 │                 BITCOIN NODE                │
 └─────────────────────────────────────────────┘
-           │
-           ▼
+                      │
+                      ▼
 ┌─────────────────────────────────────────────┐
 │      CORE CONSENSUS (UTXO + Headers)        │
 └─────────────────────────────────────────────┘
-           │
-           ▼
+                      │
+                      ▼
 ┌─────────────────────────────────────────────┐
 │  RECENT WINDOW (Blocks + Witness + segOP)   │
 └─────────────────────────────────────────────┘
-           │
-           ▼
+                      │
+                      ▼
 ┌─────────────────────────────────────────────┐
 │   PRUNED HISTORY (Old payloads deleted)     │
 └─────────────────────────────────────────────┘
-           │
-           ▼
+                      │
+                      ▼
 ┌─────────────────────────────────────────────┐
 │ ARCHIVE / ORACLE NODE (optional history)    │
 └─────────────────────────────────────────────┘
-
+```
 ### 9.8 Pruning Economics
 
 10-year pruned node ≈ 500 GB.
@@ -406,34 +413,34 @@ It’s fee fairness at inclusion and storage fairness after confirmation — a c
 
 Light validation on small hardware.
 
--prune=550
--prunesegop=1
--prunesegopheight=2016
+`-prune=550`
+`-prunesegop=1`
+`-prunesegopheight=2016`
 
 Keeps two weeks of history; fully validating; tiny disk footprint.
 
 ### 10.2 Profile B — Mining / Economic Node
 
--prune=20000
--prunesegop=1
--prunesegopheight=8064
--keepsegopcommitments=1
+`-prune=20000`
+`-prunesegop=1`
+`-prunesegopheight=8064`
+`-keepsegopcommitments=1`
 
 Keeps 3 months of segOP for fee analysis and template testing.
 
 ### 10.3 Profile C — Archive / Oracle Node
 
--prune=0
--prunesegop=0
--keepsegopcommitments=1
+`-prune=0`
+`-prunesegop=0`
+`-keepsegopcommitments=1`
 
 Stores everything, serves API or Lightning requests, earns sats for data.
 
 ### 10.4 Profile D — Enterprise / Auditor
 
--prune=0
--prunesegop=1
--prunesegopheight=40320
+`-prune=0`
+`-prunesegop=1`
+`-prunesegopheight=40320`
 
 Keeps 9 months of segOP for audit; drops old payloads.
 
