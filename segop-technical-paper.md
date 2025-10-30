@@ -36,11 +36,12 @@ Every byte again pays its way.
 ## 2 Problem Statement
 ### 2.1 The Fee Distortion
 
-Rule	Current Value	Impact
-Block weight limit	4 000 000 WU	hard cap
-Witness discount	¼ WU / B	data cheap
-Max script element	520 B	protects validation
-UTXO retention	permanent	growing state
+| Rule                 | Current Value    | Impact               |
+|----------------------|------------------|----------------------|
+| Block weight limit   | 4 000 000 WU     | Hard cap             |
+| Witness discount     | ¼ WU / B         | Data cheap           |
+| Max script element   | 520 B            | Protects validation  |
+| UTXO retention       | Permanent        | Growing state        |
 
 Because witness data is so cheap, 100 KB of arbitrary content weighs 100 000 WU instead of 400 000 WU.
 Miners still fill blocks to 4 M WU, but earn less; users compete against discounted junk.
@@ -63,14 +64,15 @@ Legacy nodes ignore it; upgraded nodes parse and charge for it.
 
 ### 3.1 Design Summary
 
-Parameter   	/ Rule                    / Purpose
----------------------------------------------------------------------
-Encoding      / TLV (Type-Length-Value) / Self-describing, extensible
-Maximum size  / 100 000 B	              / Stops bloat
-Cost per byte / 4 WU	                  / Restores parity
-Witness limit	/ 520 B	                  / Protects execution
-Placement     /	After witness	          / Deterministic layout
-Compatibility	/ Soft-fork safe	        / Old nodes ignore
+| Parameter      | Rule                    | Purpose                     |
+|----------------|-------------------------|-----------------------------|
+| Encoding       | TLV (Type-Length-Value) | Self-describing, extensible |
+| Maximum size   | 100 000 B               | Stops bloat                 |
+| Cost per byte  | 4 WU                    | Restores parity             |
+| Witness limit  | 520 B                   | Protects execution          |
+| Placement      | After witness           | Deterministic layout        |
+| Compatibility  | Soft-fork safe          | Old nodes ignore            |
+
 
 ### 3.2 Why Equal Pricing Matters
 
@@ -165,13 +167,14 @@ It’s a market fix, not a ban list.
 segOP changes accounting, not consensus.
 Validation logic stays deterministic; legacy nodes remain valid peers.
 
-Risk                    / Mitigation
------------------------------------------------------------------
-Soft-fork compatibility	/ Unrecognised flag ignored by old nodes
-Malleability            / segOP excluded from txid
-Script safety	          / 520 B element limit unchanged
-Resource load	          / ≤ 100 KB per tx caps memory
-Replay risk	            / Flag bit isolated from version
+| Risk                    | Mitigation                                     |
+|-------------------------|------------------------------------------------|
+| Soft-fork compatibility | Unrecognised flag ignored by old nodes         |
+| Malleability            | segOP excluded from txid                       |
+| Script safety           | 520 B element limit unchanged                  |
+| Resource load           | ≤ 100 KB per tx caps memory                    |
+| Replay risk             | Flag bit isolated from version                 |
+
 
 ### 6.1 Validation Flow (pseudocode)
 
@@ -282,13 +285,14 @@ Validation flow:
 4. Witness elements ≤ 520 B.
 5. Fee = (base_vbytes + segop.length) × feerate.
 
-Field	  / Purpose	              / Effect
--------------------------------------------------------
-flag:3  / SegWit + segOP active / full-price accounting
-vout[1]	/ P2SOP output          / marker only
-segop	  / structured payload    / TLV encoded
-length  / total bytes           / hard cap enforced
-tlv	    / typed entries	        / verifiable meta
+| Field     | Purpose               | Effect                   |
+|-----------|-----------------------|--------------------------|
+| flag:3    | SegWit + segOP active | Full-price accounting    |
+| vout[1]   | P2SOP output          | Marker only              |
+| segop     | Structured payload    | TLV encoded              |
+| length    | Total bytes           | Hard cap enforced        |
+| tlv       | Typed entries         | Verifiable meta          |
+
 
 ## 9 Long-Term Storage and Pruning Strategy
 ### 9.1 Background
@@ -307,11 +311,12 @@ The node remains consensus-equivalent but disk-light.
 
 ### 9.3 Selective Retention
 
-TLV Type / Example             / Keep? / Reason
------------------------------------------------------
-1        / Hash or Merkle root / yes   / audit proof
-2        / Declared length     / yes   / accounting
-10       / Raw payload         / no    / space saving
+| TLV Type  | Example             | Keep? | Reason         |
+|-----------|---------------------|-------|----------------|
+| 1         | Hash or Merkle root | Yes   | Audit proof    |
+| 2         | Declared length     | Yes   | Accounting     |
+| 10        | Raw payload         | No    | Space saving   |
+
 
 ### 9.4 Policy Flags
 
@@ -433,12 +438,13 @@ Keeps 9 months of segOP for audit; drops old payloads.
 
 ### 10.5 Summary Table
 
-Profile	/ Purpose	   / SegOP Policy        / Storage                 / Notes
---------------------------------------------------------------------------------------
-A	      / Home       / Prune after 2 weeks / Approx. 500 GB (decade) / Light + private
-B	      / Miner      / Keep 2–3 months     / Approx. 1 TB (decade)	 / Analytics
-C	      / Archive    / Keep forever        / Approx. 1–3 TB (decade) / Monetisable
-D	      / Enterprise / Keep 9 months       / Approx. 1 TB (decade)	 / Compliance
+| Profile  | Purpose    | SegOP Policy         | Storage                   | Notes             |
+|----------|------------|----------------------|---------------------------|-------------------|
+| A        | Home       | Prune after 2 weeks  | Approx. 500 GB (decade)   | Light + private   |
+| B        | Miner      | Keep 2–3 months      | Approx. 1 TB (decade)     | Analytics         |
+| C        | Archive    | Keep forever         | Approx. 1–3 TB (decade)   | Monetisable       |
+| D        | Enterprise | Keep 9 months        | Approx. 1 TB (decade)     | Compliance        |
+
 
 ### 10.6 Network Equilibrium
 
