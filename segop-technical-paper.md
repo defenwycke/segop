@@ -63,7 +63,6 @@ Legacy nodes ignore it; upgraded nodes parse and charge for it.
 
 ### 3.1 Design Summary
 
----------------------------------------------------------------------
 Parameter   	/ Rule                    / Purpose
 ---------------------------------------------------------------------
 Encoding      / TLV (Type-Length-Value) / Self-describing, extensible
@@ -166,7 +165,6 @@ It’s a market fix, not a ban list.
 segOP changes accounting, not consensus.
 Validation logic stays deterministic; legacy nodes remain valid peers.
 
------------------------------------------------------------------
 Risk                    / Mitigation
 -----------------------------------------------------------------
 Soft-fork compatibility	/ Unrecognised flag ignored by old nodes
@@ -196,12 +194,12 @@ def validate_tx(tx):
             raise PolicyError("segOP payload too large")
         charge_weight(seg.length * 4)
         validate_tlv(seg.tlv)
+```
 
 The logic is simple: include data, pay for data.
 
 ## 7 Implementation and Flag Structure
 
------------------------------------------------------------------------
 Flag Bit / Meaning             / Present In	/ Cost Model
 -----------------------------------------------------------------------
 0x00     / Legacy (no witness) / Pre-SegWit / 4 WU/B
@@ -275,6 +273,7 @@ A working example showing how segOP coexists with SegWit, commented line-by-line
 
   "locktime": 0
 }
+```
 
 Validation flow:
 1. Detect flag & 0x02.
@@ -283,7 +282,6 @@ Validation flow:
 4. Witness elements ≤ 520 B.
 5. Fee = (base_vbytes + segop.length) × feerate.
 
--------------------------------------------------------
 Field	  / Purpose	              / Effect
 -------------------------------------------------------
 flag:3  / SegWit + segOP active / full-price accounting
@@ -309,7 +307,6 @@ The node remains consensus-equivalent but disk-light.
 
 ### 9.3 Selective Retention
 
------------------------------------------------------
 TLV Type / Example             / Keep? / Reason
 -----------------------------------------------------
 1        / Hash or Merkle root / yes   / audit proof
@@ -435,7 +432,7 @@ Stores everything, serves API or Lightning requests, earns sats for data.
 Keeps 9 months of segOP for audit; drops old payloads.
 
 ### 10.5 Summary Table
---------------------------------------------------------------------------------------
+
 Profile	/ Purpose	   / SegOP Policy        / Storage                 / Notes
 --------------------------------------------------------------------------------------
 A	      / Home       / Prune after 2 weeks / Approx. 500 GB (decade) / Light + private
