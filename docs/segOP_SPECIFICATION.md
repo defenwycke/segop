@@ -1,10 +1,7 @@
 # segOP-Extended Transaction Specification
-
 **Author:** Defenwycke
 **Version:** draft-1
 **Date:** November 2025
-
----
 
 ## 1. Overview
 
@@ -18,8 +15,6 @@ It also introduces **P2SOP (Pay-to-SegOP)** — an output type anchoring structu
 * Full-fee accounting for segOP payloads (4 WU / byte)
 * Deterministic placement: witness → segOP → locktime
 * On-chain commitment via P2SOP output
-
----
 
 ## 2. Byte Order (wire layout)
 
@@ -64,8 +59,6 @@ Transactions appear on the wire in the following order:
 [ nLockTime (4, LE) ]
 (codehere)
 
----
-
 ## 3. Marker and Flag Definition
 
 | Field  | Value     | Purpose                                |
@@ -91,8 +84,6 @@ Transactions appear on the wire in the following order:
 
 Typical prefix for both: (00 03) after nVersion.
 
----
-
 ## 4. segOP Section
 
 A segOP section is appended after witness data (if any) and before locktime.
@@ -116,8 +107,6 @@ Example:
 01 10 7365674f5020544c562074657374 # type 1, 16 bytes “segOP TLV test”
 02 04 deadbeef # type 2, 4 bytes commitment
 (codehere)
-
----
 
 ## 5. Worked Example (SegWit + segOP, flag = 0x03)
 
@@ -151,8 +140,6 @@ a086010000000000 16 00 14 00112233445566778899aabbccddeeff00112233
 00000000                      # nLockTime
 (codehere)
 
----
-
 ## 6. Hashing and IDs
 
 | ID              | Includes                                 | Purpose   |
@@ -161,16 +148,12 @@ a086010000000000 16 00 14 00112233445566778899aabbccddeeff00112233
 | wtxid (SegWit)  | marker+flag + witness                    | existing  |
 | fullxid (segOP) | marker+flag + witness + segOP + locktime | unique    |
 
----
-
 ## 7. Weight and Fee Policy
 
 * segOP bytes → 4 WU / byte (full base weight)
 * No witness discount
 * Miners toggle via (-acceptsegop=1)
 * Optional pruning (-prunesegopheight=N)
-
----
 
 ## 8. Backward Compatibility
 
@@ -179,8 +162,6 @@ a086010000000000 16 00 14 00112233445566778899aabbccddeeff00112233
 * segOP-aware nodes parse payload if (flag & 0x02)
 * Consensus unchanged → soft-fork-safe
 
----
-
 ## 9. P2SOP — Pay-to-SegOP Output Type
 
 ### Purpose
@@ -188,8 +169,6 @@ a086010000000000 16 00 14 00112233445566778899aabbccddeeff00112233
 P2SOP is the **on-chain commitment and signal** linking a transaction’s vout to its segOP payload.
 
 Functions → signal  • commit  • index.
-
----
 
 ### 9.1 Script Template
 
@@ -203,8 +182,6 @@ Hex pattern → (6a23 534f50 <hash>)
 
 Unspendable but indexable.
 
----
-
 ### 9.2 Commitment Definition
 
 (codehere)
@@ -216,8 +193,6 @@ Alt (v1 extended):
 (codehere)
 segop_commitment = SHA256(SHA256(segop_payload) || segop_flag || segop_len)
 (codehere)
-
----
 
 ### 9.3 Relationship Between Sections
 
@@ -236,8 +211,6 @@ segop_commitment = SHA256(SHA256(segop_payload) || segop_flag || segop_len)
 
 Validation link → (SHA256(segop_payload) == commitment_in_P2SOP)
 
----
-
 ### 9.4 Example Pair
 
 **P2SOP output**
@@ -254,8 +227,6 @@ Validation link → (SHA256(segop_payload) == commitment_in_P2SOP)
 
 Payload’s SHA-256 matches commitment.
 
----
-
 ### 9.5 Node Validation Logic (pseudo)
 
 (codehere)
@@ -266,15 +237,11 @@ if (tx.flag & 0x02) {
 }
 (codehere)
 
----
-
 ### 9.6 Pruning and Archival Policy
 
 * Nodes may prune segOP payloads after N blocks
 * Indexers keep (commitment, txid, height)
 * Hyper Oracle archives retain (commitment, payload) for paid API
-
----
 
 ### 9.7 Summary Table
 
@@ -286,8 +253,6 @@ if (tx.flag & 0x02) {
 | flag bit 0x02     | Announces segOP    | Parser trigger              |
 | segop_marker 0x53 | Section identifier | ASCII ‘S’                   |
 
----
-
 ## 10. Summary
 
 * **Unified marker:** 0x00
@@ -298,7 +263,5 @@ if (tx.flag & 0x02) {
 * **Compatibility:** fully soft-fork-safe
 
 segOP provides a **structured, full-fee, verifiable data lane** within Bitcoin transactions — restoring fee fairness and enabling archival data markets without breaking consensus.
-
----
 
 *(End of spec)*
