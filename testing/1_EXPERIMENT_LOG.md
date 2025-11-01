@@ -1,7 +1,7 @@
 # segOP — Experiment Log #1
-Date: 31 October 2025
-Author: Defenwycke
-Project: segOP (Segregated OP_RETURN)
+**Date:** 31 October 2025  
+**Author:** Defenwycke  
+**Project:** segOP (Segregated OP_RETURN)
 
 ## Objective
 
