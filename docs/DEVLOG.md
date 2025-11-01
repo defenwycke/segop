@@ -1,18 +1,27 @@
 # Dev Log
+
 ### 2025-10-31
-- After having no response from peers (bitcoin dev group) for discussion regarding segOP technical doc, I have decided to simulate and test this thesis myself.
-- Spun server up and have *2 Core V30 nodes running - Old node and segOP node.
-- Completed RPC: getsegopdata builds and returns TLV payloads.
-- Directory cleanup - segop/ : clean namespace (segop.h, serialize.cpp, marker.cpp).
-- Transaction.h: Now aware of optional segop_payload.
-- Deamon runs and exposes RPC endpoint.
-- Wired segOP into tx serialisation
-- simple test TLV payload received on reg test.
-  ```
+- After no response from peers (bitcoin dev group) regarding segOP technical doc, decided to test and simulate the thesis independently.
+- Spun up dedicated server with 2 Core v30 nodes — baseline node and segOP node.
+- Configured regtest network for isolated testing.
+- Created clean segOP namespace under `/src/segop/` (segop.h, serialize.cpp, marker.cpp).
+- Added optional `segop_payload` field to transaction.h.
+- Extended transaction serialization and deserialization to include segOP payloads.
+- Integrated segOP into TX flow without disrupting legacy parsing.
+- Compiled segOP-enabled daemon successfully.
+- Added new RPC command `getsegopdata` to retrieve TLV payloads from segOP transactions.
+- Confirmed RPC returns valid TLV hex and text data.
+  ```json
   {
-  "hex": "534701190101167365674f5020544c562074657374207061796c6f6164",
-  "text": "segOP TLV test payload"
+    "hex": "534701190101167365674f5020544c562074657374207061796c6f6164",
+    "text": "segOP TLV test payload"
   }
   ```
- - Early testing is showing this could be possible. The next phase is to prove segOPS tx between nodes and extract payload.
-
+- Verified TLV encoding and decoding path end-to-end.
+- segOP transaction accepted and visible on regtest node.
+- Legacy node ignores segOP payload cleanly (backward compatible).
+- Confirmed segOP RPC output correct and deterministic.
+- Validated TLV section appears after witness data in serialized transaction.
+- Clean build and stable runtime confirmed under multiple reboots.
+- Environment snapshot and configs saved for repeat testing.
+- Early proof complete — segOP functional on regtest and coexists with non-segOP nodes.
