@@ -1,7 +1,7 @@
 # segOP — Experiment Log #1
-**Author:** Defenwycke  
-**Date:** 31 October 2025  
-**Stage:** Phase 1 — RPC Integration & Backward Compatibility Validation  
+Date: 31 October 2025
+Author: Defenwycke
+Project: segOP (Segregated OP_RETURN)
 
 ## Objective
 
