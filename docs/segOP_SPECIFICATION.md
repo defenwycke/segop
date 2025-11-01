@@ -1,7 +1,7 @@
 # segOP-Extended Transaction Specification
-**Author:** Defenwycke
+**Date:** November 2025  
+**Author:** Defenwycke  
 **Version:** draft-1
-**Date:** November 2025
 
 ## 1. Overview
 
@@ -20,7 +20,7 @@ It also introduces **P2SOP (Pay-to-SegOP)** — an output type anchoring structu
 
 Transactions appear on the wire in the following order:
 
-(codehere)
+```
 [ nVersion (4) ]
 
 [ marker (1) = 0x00 ]
@@ -57,7 +57,7 @@ Transactions appear on the wire in the following order:
 [ segop_payload (segop_len bytes) ] ; TLV, Merkle root, etc.
 
 [ nLockTime (4, LE) ]
-(codehere)
+```
 
 ## 3. Marker and Flag Definition
 
@@ -88,29 +88,29 @@ Typical prefix for both: (00 03) after nVersion.
 
 A segOP section is appended after witness data (if any) and before locktime.
 
-(codehere)
+```
 [ segop_marker = 0x53 ] # ASCII ‘S’
 [ segop_flag  = 0x01 ] # segOP version 1
 [ segop_len   = <varint> ]
 [ segop_payload (segop_len bytes) ]
-(codehere)
+```
 
 ### TLV structure inside payload
 
-(codehere)
+```
 [type (1)] [len (1)] [value (len bytes)]
-(codehere)
+```
 
 Example:
 
-(codehere)
+```
 01 10 7365674f5020544c562074657374 # type 1, 16 bytes “segOP TLV test”
 02 04 deadbeef # type 2, 4 bytes commitment
-(codehere)
+```
 
 ## 5. Worked Example (SegWit + segOP, flag = 0x03)
 
-(codehere)
+```
 01000000                       # nVersion = 1
 00 03                           # marker+flag (SegWit+segOP)
 01                              # vin_count = 1
@@ -138,7 +138,7 @@ a086010000000000 16 00 14 00112233445566778899aabbccddeeff00112233
 53 01 16 01 10 7365674f5020544c562074657374 02 04 deadbeef
 
 00000000                      # nLockTime
-(codehere)
+```
 
 ## 6. Hashing and IDs
 
@@ -172,9 +172,9 @@ Functions → signal  • commit  • index.
 
 ### 9.1 Script Template
 
-(codehere)
+```
 OP_RETURN 0x23 534f50 <32-byte commitment>
-(codehere)
+```
 
 Readable as → (OP_RETURN "SOP" <32-byte hash>)
 
@@ -184,30 +184,30 @@ Unspendable but indexable.
 
 ### 9.2 Commitment Definition
 
-(codehere)
+```
 segop_commitment = SHA256(segop_payload)
-(codehere)
+```
 
 Alt (v1 extended):
 
-(codehere)
+```
 segop_commitment = SHA256(SHA256(segop_payload) || segop_flag || segop_len)
-(codehere)
+```
 
 ### 9.3 Relationship Between Sections
 
-(codehere)
+```
 ┌────────────────────────────────────────────────────────────┐
-│ nVersion                                                │
-│ marker (00) + flag (03)                                 │
-│ vin(s)                                                │
-│ vout[0] = P2SOP (OP_RETURN "SOP" <commitment>)         │
-│ vout[1] = normal spend                                │
-│ witness (if flag&1)                                   │
-│ segOP section (if flag&2)                             │
-│ nLockTime                                            │
+│ nVersion                                                   │
+│ marker (00) + flag (03)                                    │
+│ vin(s)                                                     │
+│ vout[0] = P2SOP (OP_RETURN "SOP" <commitment>)             │
+│ vout[1] = normal spend                                     │
+│ witness (if flag&1)                                        │
+│ segOP section (if flag&2)                                  │
+│ nLockTime                                                  │
 └────────────────────────────────────────────────────────────┘
-(codehere)
+```
 
 Validation link → (SHA256(segop_payload) == commitment_in_P2SOP)
 
@@ -215,27 +215,27 @@ Validation link → (SHA256(segop_payload) == commitment_in_P2SOP)
 
 **P2SOP output**
 
-(codehere)
+```
 6a23 534f50 3e7d08b77c3a5d60e8d01fcfc0e5aabde3f4b090c41211f1f8a9e7a71b76e9c5
-(codehere)
+```
 
 **segOP section**
 
-(codehere)
+```
 53 01 16 01 10 7365674f5020544c562074657374 02 04 deadbeef
-(codehere)
+```
 
 Payload’s SHA-256 matches commitment.
 
 ### 9.5 Node Validation Logic (pseudo)
 
-(codehere)
+```
 if (tx.flag & 0x02) {
  commit = extract_P2SOP_commitment(tx.vout)
  if (SHA256(tx.segop_payload) != commit)
   return TX_CONSENSUS_ERROR("segop_commitment_mismatch");
 }
-(codehere)
+```
 
 ### 9.6 Pruning and Archival Policy
 
