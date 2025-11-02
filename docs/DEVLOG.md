@@ -50,3 +50,20 @@
 - Confirmed regtest block acceptance with segOP payload intact.
 - Saved raw transaction and decoded output for archive reference.
 - Proof-of-concept complete: segOP TLV data embedded, mined, and extracted successfully on regtest network.
+
+### 02-11-2025
+- Attempted direct integration of segOP hooks into Bitcoin Core v30 (transaction.h, merkle.cpp, rpc/rawtransaction.cpp).
+- Initial compile succeeded, but introduced circular includes and header dependency conflicts when referencing segOP types.
+- Encountered unresolved linker symbols for segop::DecodeTLV and RPC build regression in libbitcoin_common.a.
+- Realized direct modification of Core created merge and traceability issues — code contamination too high for maintenance.
+- Decision made to rebuild segOP as a fully modular extension, not a deep Core patch.
+- Defined code-marking standard for traceability:
+```
+Multi-line blocks wrapped with //segOP code start>>> and //segOP code end<<<
+Single-line edits tagged with //segOP
+```
+- Created plan for new clean branch feature/segop_clean to isolate development.
+- All segOP modules (TLV, encoder/decoder, markers) to remain under src/segop/ with minimal Core-facing hooks.
+- RPC interface to be rebuilt as an external registration module (rpc_segop.cpp) rather than internal patching.
+- Aim: Clean rebuild → clear separation → traceable diffs → upstream-safe.
+- Current status: preparing fresh v30 clone for clean reimplementation.
