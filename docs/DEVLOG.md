@@ -67,3 +67,18 @@ Single-line edits tagged with //segOP
 - RPC interface to be rebuilt as an external registration module (rpc_segop.cpp) rather than internal patching.
 - Aim: Clean rebuild → clear separation → traceable diffs → upstream-safe.
 - Current status: preparing fresh v30 clone for clean reimplementation.
+
+### 03-11-2025
+- Began reconstruction of segOP integration using a **backward-compatible SegWit-style design**.  
+- Modified `CMutableTransaction` to include a new `CSegOP m_segop` field for TLV data while preserving legacy `vin`/`vout` structure.  
+- Extended `CTransaction` (immutable class) with a const `m_segop` field, fully synchronized with the mutable version during construction.  
+- Patched both constructors in `transaction.cpp` to copy/move segOP payloads correctly and maintain deterministic hashing.  
+- Ensured field ordering and const-safety — segOP data is now bound to every transaction object without altering hash computation yet.  
+- Successfully compiled full Core build (`bitcoind`, `bitcoin-cli`, `test_bitcoin`) — **first clean segOP-aware build**.  
+- Verified node start-up and RPC connectivity on regtest — all legacy behavior intact.  
+- Prepared for serialization layer integration to follow SegWit’s marker/flag pattern:  
+  - `(0x00 0x01)` → SegWit only  
+  - `(0x00 0x02)` → segOP only  
+  - `(0x00 0x03)` → combined SegWit + segOP  
+- Next stage: implement segOP marker/flag in `SerializeTransaction()` and `UnserializeTransaction()`, followed by new `getsegopdata` RPC rebuild.  
+- **Milestone achieved:** segOP structure embedded into Core transaction model, build verified, runtime stable.  
