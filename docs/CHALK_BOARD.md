@@ -9,3 +9,4 @@
 - Quantum sigs will need to be added. It's only a matter of time.
 ### 04/11/2025
 - Qsig on a hyper chain wrapped in segOP. Brain storming this via Hyper Hash.
+- Qsig / Hypr Pay / 10 second chain / Vault with Qrx and Qtx channels / Balance reconciliation at channel min/max or epoch or vault close warning
