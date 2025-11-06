@@ -23,4 +23,4 @@ segOP proposes a minimal, structured extension that:
 
 ---
 
-Testing currently in progress
+Testing currently in progress: See progress in dev and experiment logs.
