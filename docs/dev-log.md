@@ -81,4 +81,40 @@ Single-line edits tagged with //segOP
   - `(0x00 0x02)` → segOP only  
   - `(0x00 0x03)` → combined SegWit + segOP  
 - Next stage: implement segOP marker/flag in `SerializeTransaction()` and `UnserializeTransaction()`, followed by new `getsegopdata` RPC rebuild.  
-- **Milestone achieved:** segOP structure embedded into Core transaction model, build verified, runtime stable.  
+- **Milestone achieved:** segOP structure embedded into Core transaction model, build verified, runtime stable.
+
+### 04-11-2025
+- Implemented segOP serialization layer within `SerializeTransaction()` and `UnserializeTransaction()`.  
+- Defined new marker–flag scheme:  
+  - `0x00 0x01` = SegWit only  
+  - `0x00 0x02` = segOP only  
+  - `0x00 0x03` = combined SegWit + segOP  
+- Added `TX_WITH_SEGOP` and `TX_WITH_WITNESS_AND_SEGOP` macros mirroring existing SegWit logic.  
+- Extended deserializer with safe fall-through detection for legacy nodes.  
+- Updated `core_read.cpp` and `core_write.cpp` to correctly recognize segOP marker bytes.  
+- Confirmed backward-compatibility — legacy node decodes standard transactions unchanged.  
+- segOP-aware node now cleanly serializes TLV payloads appended after witness data.  
+- **Milestone:** first fully serialized segOP transaction accepted by local decoder.
+
+### 05-11-2025
+- Built and verified RPC command `createsegoptx` inside `rpc/rawtransaction.cpp`.  
+- Command allows payload injection into any signed raw transaction:  
+  `createsegoptx "hexstring" "payload" → {"hex": "...segop..."}`
+- RPC help text, examples, and argument checks completed.  
+- Added consensus validation in `tx_check.cpp` requiring:  
+  - ≤ 100 KB segOP payload,  
+  - exactly one P2SOP output,  
+  - and SHA256(payload) = commitment in that output.  
+- Introduced new policy errors:  
+  `bad-txns-segop-no-p2sop` and `bad-txns-segop-commitment-mismatch`.  
+- Compiled full Core build successfully with RPC + consensus hooks active.  
+- segOP decoding verified via `decoderawtransaction` → correct `"segop"` field exposed.  
+- Environment snapshot archived — **segOP now RPC-accessible and consensus-enforced.**
+
+### 06-11-2025
+- Launched regtest environment with wallet `segoptest` to validate full segOP workflow.  
+- Constructed raw transaction containing proper P2SOP output (`OP_RETURN 0x23 "SOP" <32 B hash>`).  
+- Used `createsegoptx` to append payload `01020304` producing final serialized transaction.  
+- Verified round-trip decode:
+  ```json
+  "segop": { "version": 1, "size": 4, "hex": "01020304" }
