@@ -126,3 +126,24 @@ Single-line edits tagged with //segOP
 - Confirmed backward-compatibility: legacy decode unaffected, segOP node displays new field.
 - Result: first fully mined segOP transaction in Bitcoin Core v30 (regtest).
 - All components—serialization, RPC, consensus, and mining—verified end-to-end.
+ - Implemented new RPC `segopbuildp2sop` to derive the P2SOP OP_RETURN commitment from an arbitrary segOP payload:
+  - Input: raw segOP payload hex (e.g. `01020304`)
+  - Output: `534f50 || SHA256(payload)` for use in `{"data":"..."}` outputs.
+- Defined a wallet-driven segOP transaction pipeline on branch `segop-v2`:
+  - `segopbuildp2sop` → `createrawtransaction` → `fundrawtransaction` → `signrawtransactionwithwallet` → `createsegoptx` → `sendrawtransaction`.
+- Successfully constructed a fully signed, segOP-bearing transaction via RPC only (no manual hex editing):
+  - Included:
+    - P2WPKH payment output to `bcrt1qm7nmrglev9qt0fqvk8df9e7qjvdmvmgeectxhu`.
+    - A 0-value P2SOP output: `OP_RETURN 534f50‖SHA256(01020304)`.
+    - Attached segOP payload: `01020304` (version 1).
+- Broadcast and mined the transaction into a regtest block:
+    ```
+    `txid`: `b870015e786f8fa1bd6d4c49cc358a818f3ffe7020f6c6bc8c6d98ddf852e353`
+    `getrawtransaction` (with blockhash) returns:
+    `vout[2]` P2SOP OP_RETURN with the expected 35-byte commitment.
+    `segop` object showing `version: 1`, `size: 4`, `hex: "01020304"`
+    ```
+- Confirmed the segOP consensus rules behave as designed:
+  - Transaction is rejected if P2SOP is missing or mismatched (`bad-txns-segop-no-p2sop`, `bad-txns-segop-commitment-mismatch`).
+  - With correct `segopbuildp2sop` output, transaction passes structural validation and is mined without issue.
+- Outcome: **segOP v2 now supports automated, wallet-backed transaction creation** — the entire flow from “payload hex” to “mined segOP transaction” is expressible in a few RPC calls or a single wrapper script.
