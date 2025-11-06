@@ -147,3 +147,33 @@ Single-line edits tagged with //segOP
   - Transaction is rejected if P2SOP is missing or mismatched (`bad-txns-segop-no-p2sop`, `bad-txns-segop-commitment-mismatch`).
   - With correct `segopbuildp2sop` output, transaction passes structural validation and is mined without issue.
 - Outcome: **segOP v2 now supports automated, wallet-backed transaction creation** — the entire flow from “payload hex” to “mined segOP transaction” is expressible in a few RPC calls or a single wrapper script.
+- - Introduced fully automated **segOP send workflow** via helper script `segop_send.sh`.
+- Script now performs full lifecycle without manual input:
+  1. Auto-loads wallet if not loaded.
+  2. Builds `P2SOP` commitment from payload (SHA256 + SOP prefix).
+  3. Constructs base transaction with both payment and P2SOP outputs.
+  4. Funds and signs using wallet UTXOs (fee estimation via Core).
+  5. Attaches segOP TLV payload using `createsegoptx` RPC.
+  6. Broadcasts final segOP transaction to network.
+  7. Optionally mines a confirming block and retrieves transaction state.
+- Implemented auto-inspection output:
+  - Prints concise `decoderawtransaction` with `segop` section.
+  - Prints confirmed `getrawtransaction` view when mined.
+- Example successful execution: ./segop_send.sh segoptest bcrt1qg3asjp6yvw2hwxe4e76exd52e7wlhv4r2tu5y0 0.1 01020304 mine
+
+```
+- Resulting transaction (TXID `11e92311ac3f4d8f8dee7fad7902c7542241333bbc0b5d2b94078a53b84423df`)
+shows valid segOP structure:
+"segop": {
+"version": 1,
+"size": 4,
+"hex": "01020304"
+}
+```
+
+- Verified end-to-end flow:
+- segOP commitment generated correctly.
+- Payload integrity maintained.
+- segOP field visible and decoded post-block inclusion.
+- Legacy node compatibility preserved.
+- Next milestone: elevate `segop_send.sh` logic into an internal RPC (`segopsend`) for direct Core-level usage.
