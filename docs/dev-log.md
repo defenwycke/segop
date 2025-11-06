@@ -118,3 +118,11 @@ Single-line edits tagged with //segOP
 - Verified round-trip decode:
   ```json
   "segop": { "version": 1, "size": 4, "hex": "01020304" }
+  ```
+- Broadcast transaction → rejected until P2SOP added, proving consensus check active.
+- Added correct P2SOP → mempool accept succeeded.
+- Mined transaction into regtest block #105.
+- Retrieved via getrawtransaction TXID 1 <blockhash> showing confirmed segOP + matching SOP commitment.
+- Confirmed backward-compatibility: legacy decode unaffected, segOP node displays new field.
+- Result: first fully mined segOP transaction in Bitcoin Core v30 (regtest).
+- All components—serialization, RPC, consensus, and mining—verified end-to-end.
