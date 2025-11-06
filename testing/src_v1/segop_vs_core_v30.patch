@@ -1,0 +1,713 @@
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index 9abbf9586b..3d6cb15293 100644
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -440,3 +440,4 @@ endif()
+ if(BUILD_FUZZ_BINARY)
+   add_subdirectory(test/fuzz)
+ endif()
++add_subdirectory(segop)
+diff --git a/src/consensus/consensus.h b/src/consensus/consensus.h
+index 71b5fe2468..7bb8fe60fa 100644
+--- a/src/consensus/consensus.h
++++ b/src/consensus/consensus.h
+@@ -18,6 +18,9 @@ static const int64_t MAX_BLOCK_SIGOPS_COST = 80000;
+ /** Coinbase transaction outputs can only be spent after this number of new blocks (network rule) */
+ static const int COINBASE_MATURITY = 100;
+ 
++/** Maximum size of the coinbase scriptSig (network rule). */
++static const unsigned int MAX_COINBASE_SCRIPTSIG_SIZE = 100;
++
+ static const int WITNESS_SCALE_FACTOR = 4;
+ 
+ static const size_t MIN_TRANSACTION_WEIGHT = WITNESS_SCALE_FACTOR * 60; // 60 is the lower bound for the size of a valid serialized CTransaction
+diff --git a/src/consensus/tx_check.cpp b/src/consensus/tx_check.cpp
+index b3fee1e8b1..8b8213badb 100644
+--- a/src/consensus/tx_check.cpp
++++ b/src/consensus/tx_check.cpp
+@@ -1,59 +1,157 @@
+-// Copyright (c) 2017-2021 The Bitcoin Core developers
++// Copyright (c) 2009-2010 Satoshi Nakamoto
++// Copyright (c) 2009-2022 The Bitcoin Core developers
+ // Distributed under the MIT software license, see the accompanying
+ // file COPYING or http://www.opensource.org/licenses/mit-license.php.
+ 
+ #include <consensus/tx_check.h>
+ 
+ #include <consensus/amount.h>
+-#include <primitives/transaction.h>
++#include <consensus/consensus.h>
+ #include <consensus/validation.h>
++#include <crypto/sha256.h>
++#include <primitives/transaction.h>
++
++#include <algorithm>
++#include <set>
++
++// segOP: P2SOP script pattern
++//
++// P2SOP output script (from spec):
++//   OP_RETURN 0x23 "SOP" <32-byte commitment>
++//
++// Hex layout:
++//   6a          OP_RETURN
++//   23          PUSHDATA(35)
++//   53 4f 50    'S' 'O' 'P'
++//   <32 bytes>  commitment = SHA256(segop_payload)
++//
++// Total script length = 1 + 1 + 3 + 32 = 37 bytes.
++static constexpr unsigned int P2SOP_SCRIPT_SIZE = 37;
++static constexpr unsigned int P2SOP_PUSH_LEN    = 0x23;
++
++// Helper: Try to find exactly one P2SOP output in tx.vout and extract its
++// 32-byte commitment into `out_commitment`. Returns true if found, false if
++// none or malformed. If more than one matching P2SOP is found, also returns
++// false (we require exactly one).
++static bool ExtractSegopCommitment(const CTransaction& tx, unsigned char (&out_commitment)[CSHA256::OUTPUT_SIZE])
++{
++    bool found = false;
++
++    for (const auto& txout : tx.vout) {
++        const CScript& script = txout.scriptPubKey;
++
++        // Quick length check
++        if (script.size() != P2SOP_SCRIPT_SIZE) continue;
++
++        // Raw bytes: [0] = OP_RETURN, [1] = 0x23, [2..4] = "SOP"
++        if (script[0] != OP_RETURN) continue;
++        if (static_cast<unsigned char>(script[1]) != P2SOP_PUSH_LEN) continue;
++        if (script[2] != 0x53 || script[3] != 0x4f || script[4] != 0x50) continue; // 'S','O','P'
++
++        // If we've already found one P2SOP, having another is invalid.
++        if (found) {
++            return false;
++        }
++
++        // Extract the 32-byte commitment (bytes 5..36)
++        std::copy(script.begin() + 5, script.begin() + 5 + CSHA256::OUTPUT_SIZE, out_commitment);
++        found = true;
++    }
++
++    return found;
++}
+ 
++/**
++ * Check basic structural properties of a transaction that do not depend on the
++ * UTXO set or chain state.
++ *
++ * This is where we also enforce segOP's structural consensus rules:
++ *   - if a segOP payload is present, its size must not exceed 100,000 bytes
++ *   - if a segOP payload is present, there must be exactly one P2SOP output
++ *     whose 32-byte commitment equals SHA256(segop_payload)
++ */
+ bool CheckTransaction(const CTransaction& tx, TxValidationState& state)
+ {
+     // Basic checks that don't depend on any context
+-    if (tx.vin.empty())
++    if (tx.vin.empty()) {
+         return state.Invalid(TxValidationResult::TX_CONSENSUS, "bad-txns-vin-empty");
+-    if (tx.vout.empty())
++    }
++    if (tx.vout.empty()) {
+         return state.Invalid(TxValidationResult::TX_CONSENSUS, "bad-txns-vout-empty");
+-    // Size limits (this doesn't take the witness into account, as that hasn't been checked for malleability)
++    }
++
++    // Basic size limit: the non-witness serialized size times WITNESS_SCALE_FACTOR
++    // must not exceed MAX_BLOCK_WEIGHT.
++    //
++    // Note: TX_NO_WITNESS(tx) *does* include segOP when present, so segOP bytes
++    // are already charged at full 4 WU/byte here, matching the segOP spec.
+     if (::GetSerializeSize(TX_NO_WITNESS(tx)) * WITNESS_SCALE_FACTOR > MAX_BLOCK_WEIGHT) {
+         return state.Invalid(TxValidationResult::TX_CONSENSUS, "bad-txns-oversize");
+     }
+ 
+-    // Check for negative or overflow output values (see CVE-2010-5139)
+-    CAmount nValueOut = 0;
+-    for (const auto& txout : tx.vout)
+-    {
+-        if (txout.nValue < 0)
++    // segOP structural rules: only apply if a segOP payload is present.
++    if (!tx.segop_payload.IsNull()) {
++        // 1) Size cap: ≤ 100,000 bytes
++        static constexpr unsigned int MAX_SEGOP_PAYLOAD_SIZE = 100000;
++        if (tx.segop_payload.data.size() > MAX_SEGOP_PAYLOAD_SIZE) {
++            return state.Invalid(TxValidationResult::TX_CONSENSUS, "bad-txns-segop-toolarge");
++        }
++
++        // 2) Extract P2SOP commitment from a dedicated OP_RETURN output.
++        unsigned char commitment_script[CSHA256::OUTPUT_SIZE];
++        if (!ExtractSegopCommitment(tx, commitment_script)) {
++            // Either no P2SOP output or more than one. Both are invalid when
++            // a segOP payload is present.
++            return state.Invalid(TxValidationResult::TX_CONSENSUS, "bad-txns-segop-no-p2sop");
++        }
++
++        // 3) Compute SHA256(segop_payload) and compare.
++        unsigned char payload_hash[CSHA256::OUTPUT_SIZE];
++        CSHA256()
++            .Write(tx.segop_payload.data.data(), tx.segop_payload.data.size())
++            .Finalize(payload_hash);
++
++        if (!std::equal(std::begin(commitment_script), std::end(commitment_script),
++                        std::begin(payload_hash))) {
++            return state.Invalid(TxValidationResult::TX_CONSENSUS, "bad-txns-segop-commitment-mismatch");
++        }
++    }
++
++    // Check for negative or overflow output values (same style as upstream).
++    CAmount nValueOut{0};
++    for (const auto& txout : tx.vout) {
++        if (!MoneyRange(txout.nValue)) {
+             return state.Invalid(TxValidationResult::TX_CONSENSUS, "bad-txns-vout-negative");
+-        if (txout.nValue > MAX_MONEY)
+-            return state.Invalid(TxValidationResult::TX_CONSENSUS, "bad-txns-vout-toolarge");
++        }
++
+         nValueOut += txout.nValue;
+-        if (!MoneyRange(nValueOut))
+-            return state.Invalid(TxValidationResult::TX_CONSENSUS, "bad-txns-txouttotal-toolarge");
++
++        if (!MoneyRange(nValueOut)) {
++            return state.Invalid(TxValidationResult::TX_CONSENSUS, "bad-txns-vout-toolarge");
++        }
+     }
+ 
+-    // Check for duplicate inputs (see CVE-2018-17144)
+-    // While Consensus::CheckTxInputs does check if all inputs of a tx are available, and UpdateCoins marks all inputs
+-    // of a tx as spent, it does not check if the tx has duplicate inputs.
+-    // Failure to run this check will result in either a crash or an inflation bug, depending on the implementation of
+-    // the underlying coins database.
++    // Check for duplicate inputs.
+     std::set<COutPoint> vInOutPoints;
+     for (const auto& txin : tx.vin) {
+-        if (!vInOutPoints.insert(txin.prevout).second)
++        if (!vInOutPoints.insert(txin.prevout).second) {
+             return state.Invalid(TxValidationResult::TX_CONSENSUS, "bad-txns-inputs-duplicate");
++        }
+     }
+ 
+-    if (tx.IsCoinBase())
+-    {
+-        if (tx.vin[0].scriptSig.size() < 2 || tx.vin[0].scriptSig.size() > 100)
++    if (tx.IsCoinBase()) {
++        // Coinbase scriptsig size limits.
++        if (tx.vin[0].scriptSig.size() < 2 ||
++            tx.vin[0].scriptSig.size() > MAX_COINBASE_SCRIPTSIG_SIZE) {
+             return state.Invalid(TxValidationResult::TX_CONSENSUS, "bad-cb-length");
+-    }
+-    else
+-    {
+-        for (const auto& txin : tx.vin)
+-            if (txin.prevout.IsNull())
++        }
++    } else {
++        // For non-coinbase transactions, prevouts must not be null.
++        for (const auto& txin : tx.vin) {
++            if (txin.prevout.IsNull()) {
+                 return state.Invalid(TxValidationResult::TX_CONSENSUS, "bad-txns-prevout-null");
++            }
++        }
+     }
+ 
+     return true;
+diff --git a/src/core_read.cpp b/src/core_read.cpp
+index 27d0d9d740..15fc518a7e 100644
+--- a/src/core_read.cpp
++++ b/src/core_read.cpp
+@@ -130,7 +130,8 @@ static bool DecodeTx(CMutableTransaction& tx, const std::vector<unsigned char>&
+     //   0-input 1-output incomplete transaction).
+     //   - Restricted by try_no_witness (which disables legacy if false) and try_witness (which
+     //     disables extended if false).
+-    //   - Ignore serializations that do not fully consume the hex string.
++    //   - Ignore serializations that do not fully consume the hex string, *except* that for the
++    //     extended form we allow a trailing segOP payload and attempt to parse it.
+     // - If neither succeeds, fail.
+     // - If only one succeeds, return that one.
+     // - If both decode attempts succeed:
+@@ -141,12 +142,33 @@ static bool DecodeTx(CMutableTransaction& tx, const std::vector<unsigned char>&
+     bool ok_extended = false, ok_legacy = false;
+ 
+     // Try decoding with extended serialization support, and remember if the result successfully
+-    // consumes the entire input.
++    // consumes the entire input. With segOP support, we additionally allow a trailing segOP
++    // payload after the witness data and try to parse it into tx_extended.segop_payload.
+     if (try_witness) {
+         DataStream ssData(tx_data);
+         try {
+             ssData >> TX_WITH_WITNESS(tx_extended);
+-            if (ssData.empty()) ok_extended = true;
++
++            if (ssData.empty()) {
++                // Normal (non-segOP) extended transaction: everything consumed.
++                ok_extended = true;
++            } else {
++                // segOP-aware decode: if there are trailing bytes, try to interpret them
++                // as a CSegopPayload. Only treat this as successful if that parse consumes
++                // *all* remaining bytes.
++                try {
++                    CSegopPayload segop;
++                    ssData >> segop;
++
++                    if (ssData.empty()) {
++                        tx_extended.segop_payload = std::move(segop);
++                        ok_extended = true;
++                    }
++                } catch (const std::exception&) {
++                    // Trailing bytes were not a valid segOP payload; fall through and
++                    // treat extended decoding as failed.
++                }
++            }
+         } catch (const std::exception&) {
+             // Fall through.
+         }
+diff --git a/src/core_write.cpp b/src/core_write.cpp
+index 14836f5148..c63699aab2 100644
+--- a/src/core_write.cpp
++++ b/src/core_write.cpp
+@@ -260,11 +260,22 @@ void TxToUniv(const CTransaction& tx, const uint256& block_hash, UniValue& entry
+         entry.pushKV("fee", ValueFromAmount(fee));
+     }
+ 
++    // --- segOP: expose payload in JSON when present ---
++    if (!tx.segop_payload.IsNull()) {
++        UniValue seg(UniValue::VOBJ);
++        seg.pushKV("version", (int64_t)tx.segop_payload.version);
++        seg.pushKV("size", (uint64_t)tx.segop_payload.data.size());
++        seg.pushKV("hex", HexStr(tx.segop_payload.data));
++        entry.pushKV("segop", std::move(seg));
++    }
++    // --- end segOP JSON section ---
++
+     if (!block_hash.IsNull()) {
+         entry.pushKV("blockhash", block_hash.GetHex());
+     }
+ 
+     if (include_hex) {
+-        entry.pushKV("hex", EncodeHexTx(tx)); // The hex-encoded transaction. Used the name "hex" to be consistent with the verbose output of "getrawtransaction".
++        // The hex-encoded transaction. Used the name "hex" to be consistent with the verbose output of "getrawtransaction".
++        entry.pushKV("hex", EncodeHexTx(tx));
+     }
+ }
+diff --git a/src/primitives/transaction.cpp b/src/primitives/transaction.cpp
+index e80ab60fcd..f3483c0d89 100644
+--- a/src/primitives/transaction.cpp
++++ b/src/primitives/transaction.cpp
+@@ -18,11 +18,15 @@
+ #include <cassert>
+ #include <stdexcept>
+ 
++/** COutPoint *****************************************************************/
++
+ std::string COutPoint::ToString() const
+ {
+-    return strprintf("COutPoint(%s, %u)", hash.ToString().substr(0,10), n);
++    return strprintf("COutPoint(%s, %u)", hash.ToString().substr(0, 10), n);
+ }
+ 
++/** CTxIn *********************************************************************/
++
+ CTxIn::CTxIn(COutPoint prevoutIn, CScript scriptSigIn, uint32_t nSequenceIn)
+ {
+     prevout = prevoutIn;
+@@ -42,16 +46,20 @@ std::string CTxIn::ToString() const
+     std::string str;
+     str += "CTxIn(";
+     str += prevout.ToString();
+-    if (prevout.IsNull())
++    if (prevout.IsNull()) {
+         str += strprintf(", coinbase %s", HexStr(scriptSig));
+-    else
++    } else {
+         str += strprintf(", scriptSig=%s", HexStr(scriptSig).substr(0, 24));
+-    if (nSequence != SEQUENCE_FINAL)
++    }
++    if (nSequence != SEQUENCE_FINAL) {
+         str += strprintf(", nSequence=%u", nSequence);
++    }
+     str += ")";
+     return str;
+ }
+ 
++/** CTxOut ********************************************************************/
++
+ CTxOut::CTxOut(const CAmount& nValueIn, CScript scriptPubKeyIn)
+ {
+     nValue = nValueIn;
+@@ -60,47 +68,101 @@ CTxOut::CTxOut(const CAmount& nValueIn, CScript scriptPubKeyIn)
+ 
+ std::string CTxOut::ToString() const
+ {
+-    return strprintf("CTxOut(nValue=%d.%08d, scriptPubKey=%s)", nValue / COIN, nValue % COIN, HexStr(scriptPubKey).substr(0, 30));
++    return strprintf(
++        "CTxOut(nValue=%d.%08d, scriptPubKey=%s)",
++        nValue / COIN,
++        nValue % COIN,
++        HexStr(scriptPubKey).substr(0, 30)
++    );
+ }
+ 
+-CMutableTransaction::CMutableTransaction() : version{CTransaction::CURRENT_VERSION}, nLockTime{0} {}
+-CMutableTransaction::CMutableTransaction(const CTransaction& tx) : vin(tx.vin), vout(tx.vout), version{tx.version}, nLockTime{tx.nLockTime} {}
++/** CMutableTransaction *******************************************************/
++
++CMutableTransaction::CMutableTransaction()
++    : vin(),
++      vout(),
++      version{CTransaction::CURRENT_VERSION},
++      nLockTime{0},
++      segop_payload() // segOP: default-constructed (null)
++{
++}
++
++CMutableTransaction::CMutableTransaction(const CTransaction& tx)
++    : vin(tx.vin),
++      vout(tx.vout),
++      version{tx.version},
++      nLockTime{tx.nLockTime},
++      segop_payload(tx.segop_payload) // segOP: carry payload across
++{
++}
+ 
+ Txid CMutableTransaction::GetHash() const
+ {
++    // Hash of the transaction without witness (and without segwit discount).
+     return Txid::FromUint256((HashWriter{} << TX_NO_WITNESS(*this)).GetHash());
+ }
+ 
++/** CTransaction (internal helpers) *******************************************/
++
+ bool CTransaction::ComputeHasWitness() const
+ {
+-    return std::any_of(vin.begin(), vin.end(), [](const auto& input) {
++    return std::any_of(vin.begin(), vin.end(), [](const CTxIn& input) {
+         return !input.scriptWitness.IsNull();
+     });
+ }
+ 
+ Txid CTransaction::ComputeHash() const
+ {
++    // Legacy txid: no witness, but includes segOP, since segOP lives in the
++    // non-witness serialization lane and pays full weight.
+     return Txid::FromUint256((HashWriter{} << TX_NO_WITNESS(*this)).GetHash());
+ }
+ 
+ Wtxid CTransaction::ComputeWitnessHash() const
+ {
++    // If there is no witness, wtxid == txid (BIP141 behaviour).
+     if (!HasWitness()) {
+         return Wtxid::FromUint256(hash.ToUint256());
+     }
+ 
++    // With witness: hash over full-with-witness serialization (segOP lives in
++    // the non-witness lane and is *not* discounted).
+     return Wtxid::FromUint256((HashWriter{} << TX_WITH_WITNESS(*this)).GetHash());
+ }
+ 
+-CTransaction::CTransaction(const CMutableTransaction& tx) : vin(tx.vin), vout(tx.vout), version{tx.version}, nLockTime{tx.nLockTime}, m_has_witness{ComputeHasWitness()}, hash{ComputeHash()}, m_witness_hash{ComputeWitnessHash()} {}
+-CTransaction::CTransaction(CMutableTransaction&& tx) : vin(std::move(tx.vin)), vout(std::move(tx.vout)), version{tx.version}, nLockTime{tx.nLockTime}, m_has_witness{ComputeHasWitness()}, hash{ComputeHash()}, m_witness_hash{ComputeWitnessHash()} {}
++/** CTransaction (public) *****************************************************/
++
++CTransaction::CTransaction(const CMutableTransaction& tx)
++    : vin(tx.vin),
++      vout(tx.vout),
++      version{tx.version},
++      nLockTime{tx.nLockTime},
++      segop_payload(tx.segop_payload),
++      m_has_witness{ComputeHasWitness()},
++      hash{ComputeHash()},
++      m_witness_hash{ComputeWitnessHash()}
++{
++}
++
++CTransaction::CTransaction(CMutableTransaction&& tx)
++    : vin(std::move(tx.vin)),
++      vout(std::move(tx.vout)),
++      version{tx.version},
++      nLockTime{tx.nLockTime},
++      segop_payload(std::move(tx.segop_payload)),
++      m_has_witness{ComputeHasWitness()},
++      hash{ComputeHash()},
++      m_witness_hash{ComputeWitnessHash()}
++{
++}
+ 
+ CAmount CTransaction::GetValueOut() const
+ {
+     CAmount nValueOut = 0;
+     for (const auto& tx_out : vout) {
+-        if (!MoneyRange(tx_out.nValue) || !MoneyRange(nValueOut + tx_out.nValue))
++        if (!MoneyRange(tx_out.nValue) || !MoneyRange(nValueOut + tx_out.nValue)) {
+             throw std::runtime_error(std::string(__func__) + ": value out of range");
++        }
+         nValueOut += tx_out.nValue;
+     }
+     assert(MoneyRange(nValueOut));
+@@ -109,23 +171,40 @@ CAmount CTransaction::GetValueOut() const
+ 
+ unsigned int CTransaction::GetTotalSize() const
+ {
++    // Full serialized size including witness (and segOP in the base lane).
+     return ::GetSerializeSize(TX_WITH_WITNESS(*this));
+ }
+ 
+ std::string CTransaction::ToString() const
+ {
+     std::string str;
+-    str += strprintf("CTransaction(hash=%s, ver=%u, vin.size=%u, vout.size=%u, nLockTime=%u)\n",
+-        GetHash().ToString().substr(0,10),
++    str += strprintf(
++        "CTransaction(hash=%s, ver=%u, vin.size=%u, vout.size=%u, nLockTime=%u)\n",
++        GetHash().ToString().substr(0, 10),
+         version,
+         vin.size(),
+         vout.size(),
+-        nLockTime);
+-    for (const auto& tx_in : vin)
++        nLockTime
++    );
++
++    for (const auto& tx_in : vin) {
+         str += "    " + tx_in.ToString() + "\n";
+-    for (const auto& tx_in : vin)
++    }
++    for (const auto& tx_in : vin) {
+         str += "    " + tx_in.scriptWitness.ToString() + "\n";
+-    for (const auto& tx_out : vout)
++    }
++    for (const auto& tx_out : vout) {
+         str += "    " + tx_out.ToString() + "\n";
++    }
++
++    // segOP debugging: show presence and size, but not full payload hex
++    if (!segop_payload.IsNull()) {
++        str += strprintf(
++            "    segOP(version=%u, size=%u bytes)\n",
++            segop_payload.version,
++            static_cast<unsigned int>(segop_payload.data.size())
++        );
++    }
++
+     return str;
+ }
+diff --git a/src/primitives/transaction.h b/src/primitives/transaction.h
+index 295bce61b9..f1d6445cd2 100644
+--- a/src/primitives/transaction.h
++++ b/src/primitives/transaction.h
+@@ -12,6 +12,7 @@
+ #include <script/script.h>
+ #include <serialize.h>
+ #include <uint256.h>
++#include <segop/segop.h>   // segOP payload
+ 
+ #include <cstddef>
+ #include <cstdint>
+@@ -202,14 +203,19 @@ static constexpr TransactionSerParams TX_NO_WITNESS{.allow_witness = false};
+  * - std::vector<CTxOut> vout
+  * - uint32_t nLockTime
+  *
+- * Extended transaction serialization format:
++ * Extended transaction serialization format (SegWit + segOP):
+  * - uint32_t version
+  * - unsigned char dummy = 0x00
+  * - unsigned char flags (!= 0)
++ *   bit0 (0x01): witness data present
++ *   bit1 (0x02): segOP payload present
+  * - std::vector<CTxIn> vin
+  * - std::vector<CTxOut> vout
+  * - if (flags & 1):
+  *   - CScriptWitness scriptWitness; (deserialized into CTxIn)
++ * - if (flags & 2):
++ *   - uint8_t segop_marker = 0x53 ('S')
++ *   - CSegopPayload segop_payload;   // version + [len + bytes]
+  * - uint32_t nLockTime
+  */
+ template<typename Stream, typename TxType>
+@@ -234,6 +240,8 @@ void UnserializeTransaction(TxType& tx, Stream& s, const TransactionSerParams& p
+         /* We read a non-empty vin. Assume a normal vout follows. */
+         s >> tx.vout;
+     }
++
++    // Witness (bit 0) – unchanged SegWit behaviour
+     if ((flags & 1) && fAllowWitness) {
+         /* The witness flag is present, and we support witnesses. */
+         flags ^= 1;
+@@ -245,6 +253,22 @@ void UnserializeTransaction(TxType& tx, Stream& s, const TransactionSerParams& p
+             throw std::ios_base::failure("Superfluous witness record");
+         }
+     }
++
++    // segOP payload (bit 1)
++    if (flags & 2) {
++        flags ^= 2;
++
++        // Read and validate segOP marker 0x53 ('S')
++        unsigned char segop_marker = 0;
++        s >> segop_marker;
++        if (segop_marker != 0x53) {
++            throw std::ios_base::failure("Invalid segOP marker");
++        }
++
++        // Then deserialize version + len + bytes from CSegopPayload
++        s >> tx.segop_payload;
++    }
++
+     if (flags) {
+         /* Unknown flag in the serialization */
+         throw std::ios_base::failure("Unknown transaction optional data");
+@@ -259,26 +283,39 @@ void SerializeTransaction(const TxType& tx, Stream& s, const TransactionSerParam
+ 
+     s << tx.version;
+     unsigned char flags = 0;
+-    // Consistency check
+-    if (fAllowWitness) {
+-        /* Check whether witnesses need to be serialized. */
+-        if (tx.HasWitness()) {
+-            flags |= 1;
+-        }
++
++    // Witness flag (bit 0)
++    if (fAllowWitness && tx.HasWitness()) {
++        flags |= 1;
++    }
++    // segOP flag (bit 1)
++    if (!tx.segop_payload.IsNull()) {
++        flags |= 2;
+     }
++
+     if (flags) {
+-        /* Use extended format in case witnesses are to be serialized. */
++        /* Use extended format in case any optional sections are to be serialized. */
+         std::vector<CTxIn> vinDummy;
+         s << vinDummy;
+         s << flags;
+     }
++
+     s << tx.vin;
+     s << tx.vout;
+-    if (flags & 1) {
++
++    if ((flags & 1) && fAllowWitness) {
+         for (size_t i = 0; i < tx.vin.size(); i++) {
+             s << tx.vin[i].scriptWitness.stack;
+         }
+     }
++
++    if (flags & 2) {
++        // segOP marker 0x53 ('S') followed by payload (version + len + bytes)
++        unsigned char segop_marker = 0x53;
++        s << segop_marker;
++        s << tx.segop_payload;
++    }
++
+     s << tx.nLockTime;
+ }
+ 
+@@ -308,6 +345,9 @@ public:
+     const uint32_t version;
+     const uint32_t nLockTime;
+ 
++    // segOP: attached payload
++    const CSegopPayload segop_payload;
++
+ private:
+     /** Memory only. */
+     const bool m_has_witness;
+@@ -347,8 +387,8 @@ public:
+     CAmount GetValueOut() const;
+ 
+     /**
+-     * Get the total transaction size in bytes, including witness data.
+-     * "Total Size" defined in BIP141 and BIP144.
++     * Get the total transaction size in bytes, including witness data and segOP.
++     * "Total Size" defined in BIP141 and BIP144 plus segOP section.
+      * @return Total transaction size in bytes
+      */
+     unsigned int GetTotalSize() const;
+@@ -381,6 +421,9 @@ struct CMutableTransaction
+     uint32_t version;
+     uint32_t nLockTime;
+ 
++    // segOP: mutable payload
++    CSegopPayload segop_payload;
++
+     explicit CMutableTransaction();
+     explicit CMutableTransaction(const CTransaction& tx);
+ 
+diff --git a/src/rpc/rawtransaction.cpp b/src/rpc/rawtransaction.cpp
+index 1a8edc594f..61dac69374 100644
+--- a/src/rpc/rawtransaction.cpp
++++ b/src/rpc/rawtransaction.cpp
+@@ -488,6 +488,64 @@ static RPCHelpMan decoderawtransaction()
+     };
+ }
+ 
++static RPCHelpMan createsegoptx()
++{
++    return RPCHelpMan{
++        "createsegoptx",
++        "Attach a segOP payload to an existing raw transaction.\n"
++        "Takes a standard raw transaction hex string, sets segOP version=1 and the given payload,\n"
++        "and returns the re-serialized transaction hex (using the extended segOP-aware format).\n",
++        {
++            {"hexstring", RPCArg::Type::STR_HEX, RPCArg::Optional::NO,
++             "The transaction hex string (non-segOP or segOP-neutral)"},
++            {"payload",   RPCArg::Type::STR_HEX, RPCArg::Optional::NO,
++             "Hex-encoded segOP payload bytes"},
++        },
++        RPCResult{
++            RPCResult::Type::OBJ, "", "",
++            {
++                {RPCResult::Type::STR_HEX, "hex",
++                 "The hex-encoded transaction with segOP payload attached"},
++            }
++        },
++        RPCExamples{
++            HelpExampleCli("createsegoptx", "\"0200000001...\" \"01020304\"") +
++            HelpExampleRpc("createsegoptx", "\"0200000001...\", \"01020304\"")
++        },
++        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
++        {
++            // Decode the input tx using the normal heuristics (witness or not)
++            CMutableTransaction mtx;
++            if (!DecodeHexTx(mtx,
++                             request.params[0].get_str(),
++                             /*try_no_witness=*/true,
++                             /*try_witness=*/true)) {
++                throw JSONRPCError(RPC_DESERIALIZATION_ERROR, "TX decode failed");
++            }
++
++            const std::string payload_hex = request.params[1].get_str();
++            if (!IsHex(payload_hex)) {
++                throw JSONRPCError(RPC_INVALID_PARAMETER,
++                                   "Payload must be hex string");
++            }
++            std::vector<unsigned char> payload = ParseHex(payload_hex);
++
++            // Attach segOP payload; version 1 for now
++            mtx.segop_payload.version = 1;
++            mtx.segop_payload.data = std::move(payload);
++
++            // Serialize using the extended (witness+segOP-aware) format
++            DataStream ssTx{};
++            ssTx << TX_WITH_WITNESS(mtx);
++
++            UniValue result(UniValue::VOBJ);
++            result.pushKV("hex", HexStr(ssTx));
++            return result;
++        }
++    };
++}
++
++
+ static RPCHelpMan decodescript()
+ {
+     return RPCHelpMan{
+@@ -2121,6 +2179,7 @@ void RegisterRawTransactionRPCCommands(CRPCTable& t)
+         {"rawtransactions", &getrawtransaction},
+         {"rawtransactions", &createrawtransaction},
+         {"rawtransactions", &decoderawtransaction},
++        {"rawtransactions", &createsegoptx},  //segOP
+         {"rawtransactions", &decodescript},
+         {"rawtransactions", &combinerawtransaction},
+         {"rawtransactions", &signrawtransactionwithkey},
