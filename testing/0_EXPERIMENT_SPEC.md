@@ -81,8 +81,7 @@ This experiment aims to design, implement, and validate segOP through regtest an
 ---
 
 #### Phase 4 — Public Validation
-10. **Broadcast Genesis segOP Transaction (Mainnet)**  
-    - Construct a symbolic first segOP message to Satoshi’s address.  
+10. **Broadcast Genesis segOP Transaction (segOP Testnet)**  
     - Verify receipt and extraction by other segOP nodes.
 
 11. **Economic Simulation**  
