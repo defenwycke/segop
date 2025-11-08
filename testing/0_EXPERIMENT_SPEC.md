@@ -23,16 +23,13 @@ This experiment aims to design, implement, and validate segOP through regtest an
 5. **Implement Pruning Levels for segOP Data**  
    Test storage reduction techniques (partial, full, and archive modes) to validate data lifecycle management and node scalability.
 
-6. **Execute a “Genesis segOP Transaction”**  
-   Craft and broadcast a symbolic segOP transaction directed to Satoshi’s known address, confirming payload extraction on independent segOP nodes.
-
-7. **Model Network Economics**  
+6. **Model Network Economics**  
    Simulate mass segOP traffic to evaluate the economic equilibrium between blockspace usage, miner fee revenue, and network overhead.
 
-8. **Forecast Blockchain Growth**  
+7. **Forecast Blockchain Growth**  
    Estimate long-term storage implications of large-scale segOP adoption under various data retention and pruning policies.
 
-9. **Publish Results**  
+8. **Publish Results**  
    Document all implementation details, experiments, and results in a peer-reviewable technical paper (segOP White Paper).
 
 ---
