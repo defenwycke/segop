@@ -177,3 +177,32 @@ shows valid segOP structure:
 - segOP field visible and decoded post-block inclusion.
 - Legacy node compatibility preserved.
 - Next milestone: elevate `segop_send.sh` logic into an internal RPC (`segopsend`) for direct Core-level usage.
+
+### 07-11-2025
+- Completed integration of the segOP automated send workflow (segop_send.sh).
+- Verified full transaction lifecycle.
+  - Wallet auto-load (segoptest).
+  - P2SOP commitment generation (534f50 || SHA256(payload)).
+  - Transaction creation with standard output + 0-value P2SOP.
+  - Funding, signing, and payload attachment using createsegoptx.
+  - Broadcast and optional block mining.
+- Confirmed script performs clean end-to-end flow with deterministic output.
+- Verified payload integrity and correct segOP commitment inside mined blocks.
+- Tested multiple payloads successfully — all mined, decoded, and verified via getrawtransaction.
+- Confirmed legacy node compatibility — transactions accepted, segOP ignored safely.
+- Began outlining design for internal RPC equivalent (segopsend) to replace external script.
+
+### 08-11-2025
+- Implemented and tested segopsend RPC command, a native Core replacement for the shell script.
+  - Automates full workflow: builds P2SOP commitment, funds, signs, attaches segOP payload, and broadcasts.
+  - Optional "mine" flag triggers local block generation for confirmation.
+  - Verified returned TXID and payload integrity match those from segop_send.sh.
+- Added decodesegoptx RPC to extract and display segOP TLV data directly from a raw transaction or TXID.
+  - Outputs decoded version, length, payload hex, and text fields.
+  - Used to verify block-embedded payloads without manual hex parsing.
+- Deployed basic web wallet interface for local testing (React + simple JSON-RPC bridge):
+  - Allows users to enter payloads, send segOP transactions, and view decoded data.
+  - Connects directly to local Core node via RPC for regtest demonstration.
+  - Confirmed successful end-to-end flow: payload → segopsend → mined → decodesegoptx → UI display.
+  - Confirmed stability under multiple sequential transactions and reboots.
+- segOP now fully functional from RPC to web interface — complete regtest demonstration stack achieved (Core, RPC, and UI layers unified).
