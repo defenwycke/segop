@@ -13,6 +13,12 @@
 - Qsig / Hypr Pay / 10 second chain / Vault with Qrx and Qtx channels / Balance reconciliation at channel min/max or epoch or vault close warning.
 ### 07/11/2025
 - Build a segOP wallet that can be used to input data into segOP tx easily.
-- Include option to pull/view tx segOP data
+- Include option to pull/view tx segOP data.
 - Possible avenue for building economic/pruning testing modal within wallet.
-- If wallet is web-based we could provide link for others to trial. 
+- If wallet is web-based we could provide link for others to trial.
+### 09/11/2025
+- Add wallet check, load, create via wallet app?
+- Add mine tx for reg test / check confirms.
+- List network tx.
+- Introduce back testing modal?
+- Check current mean trend of fees versus potential segOP fees.
