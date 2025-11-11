@@ -1,3 +1,5 @@
+> **⚠️ STATUS: SUPERSEDED**
+
 # segOP : Segregated OP_RETURN
 # A Structured and Fee-Fair Data Extension for Bitcoin
 
