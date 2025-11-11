@@ -4,7 +4,7 @@
 > It is **dynamic, experimental, and subject to rapid change** — sometimes hourly.  
 > Concepts may evolve, code may break, and half-baked ideas will absolutely appear.
 
-## What This Folder **IS**...
+## What this folder is...
 
 This space represents the living process of building and testing new ideas.  
 Files here are often prototypes, sketches, drafts, or test harnesses — not final designs.
@@ -15,7 +15,7 @@ Expect:
 - Dead ends, rewrites, and occasional bad ideas
 - Internal notes that may contradict each other
 
-## What This Folder Is **NOT**
+## What this folder is **NOT**
 
 - Production-ready  
 - Reviewed or approved  
@@ -23,7 +23,7 @@ Expect:
 
 If you’re looking for stable releases or official specs, check the `/peer-review/` directory and even then make sure it doesnt state `draft`!
 
-## How to Read This
+## How to read this
 
 You’re welcome to explore and follow the evolution of ideas here —  
 just **don’t judge the unfinished product by its rough drafts.**  
