@@ -1,4 +1,4 @@
-# segOP Peer Review Pack
+# segOP Peer Review Pack [DRAFT]
 
 This directory contains everything needed to review, test, and reason about segOP (Segregated OP_RETURN):
 
