@@ -1,3 +1,5 @@
+> **⚠️ STATUS: SUPERSEDED**
+
 # segOP-Extended Transaction Specification
 **Date:** November 2025  
 **Author:** Defenwycke  
