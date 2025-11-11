@@ -1,1 +1,3 @@
-draft
+# WHITEPAPER.md
+
+*In progress*
