@@ -206,3 +206,50 @@ shows valid segOP structure:
   - Confirmed successful end-to-end flow: payload → segopsend → mined → decodesegoptx → UI display.
   - Confirmed stability under multiple sequential transactions and reboots.
 - segOP now fully functional from RPC to web interface — complete regtest demonstration stack achieved (Core, RPC, and UI layers unified).
+
+### 09-11-2025
+- Continued refinement of segOP implementation and documentation.
+- Drafted Experiment Log Zero summarizing the full segOP design, rationale, and implementation goals.
+- Updated experiment spec to clearly define:
+  - segOP as a fully-fee-paying structured data lane following the SegWit model.
+  - Objectives: integrate, expose RPCs, validate backward compatibility, demonstrate pruning potential.
+  - Verified continued stability of segopsend RPC under repeated regtest mining cycles.
+  - Began preparations for segOP wallet integration with front-end React dashboard (segop-wallet / segop-ui projects).
+  - Implemented live RPC connectivity test (getblockchaininfo, getnetworkinfo) to populate UI metrics.
+  - Outlined component structure for app:
+    - Views: Dashboard / Send / Inspector / Payloads / Simulator / Settings.
+  - Types defined for NodeInfo, Settings, and PayloadTemplate.
+  - Deployed local version of app.tsx connecting to backend RPC for data inspection.
+  - Verified regtest node responds to UI payload creation and TX submission requests.
+- Continued internal review of segOP consensus design for P2SOP enforcement and pruning logic.
+
+### 10-11-2025
+- Shifted focus to BIP preparation and peer review phase.
+- Engaged with Bitcoin-dev mailing list — received first response from moonsettler requesting clarification on:
+  - Node synchronization behavior between segOP-aware and legacy nodes.
+  - Retention and pruning policies.
+  - Drafted technical reply explaining:
+    - segOP payloads are cryptographically committed but prunable post-validation.
+    - Legacy nodes ignore segOP data; segOP-aware nodes validate then may discard payload bytes.
+    - Distinction between full, partial, and pruned node policies.
+    - OP_RETURN data cannot be pruned, whereas segOP enables verifiable pruning.
+- Added clarification to proposal: segOP introduces a quarantine lane for arbitrary data, preventing spam and abuse of witness or OP_RETURN fields.
+- Confirmed continued regtest node stability with mixed SegWit + segOP transactions.
+
+### 11-11-2025
+- Began cleanup and consolidation for segOP documentation set:
+- Regenerated main repo README — concise, public-facing summary of segOP’s purpose, motivation, and parallels to SegWit.
+- Added comparison table explaining how segOP restores fee fairness, enables pruning, and opens structured use cases (quantum sigs, rollup roots, vault metadata).
+- Completed segOP Extended Transaction Specification (draft-1) in Markdown format:
+  - Introduced clear section numbering, field tables, and examples for marker, flag, and TLV structure.
+  - Defined new identifiers: txid, wtxid, and fullxid (extended ID including segOP).
+  - Enforced single P2SOP per transaction consensus rule.
+  - Clarified IBD (Initial Block Download) behavior — pruned payloads do not affect chain validity.
+  - Performed cross-check of all technical sections for accuracy; corrected formatting and terminology inconsistencies.
+  - Draft now ready for submission as Pre-BIP.
+- Parallel front-end work:
+  - Added createAddress and test utility functions to wallet UI for full segOP transaction flow demonstration.
+  - Confirmed segopsend and decodesegoptx integrate correctly with web interface via local backend.
+  - Conducted final validation run on regtest:
+  - Generated and mined new segOP transaction using updated build.
+
