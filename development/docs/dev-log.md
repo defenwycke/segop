@@ -253,3 +253,9 @@ shows valid segOP structure:
   - Conducted final validation run on regtest:
   - Generated and mined new segOP transaction using updated build.
 
+### 12-11-2025
+- After rebuilding the spec sheet - Code updates planned and started.
+- Just receieved email from Moonsettler regarding pruning and p2p availability of segOP payload. Intrusive thoughts have now disrupted work flow.
+- Developed new method of pruning and p2p payload verification that doesnt break relays.
+- I will continue with the initial code updates to the spec. Build a new spec for pruning and integrate.
+- It is a better method of pruning - so i am grateful for Moonsettlers questions.
