@@ -2,7 +2,7 @@
 
 **Name:** segOP (Segregated OP_RETURN)  
 **Author:** Defenwycke  
-**Version:** draft-1  
+**Version:** draft-1.1  
 **Date:** November 2025  
 **Status:** Pre-BIP draft (normative spec)  
 
@@ -26,30 +26,52 @@ Legacy nodes compute the same `txid` and consider segOP-bearing transactions val
 
 `core tx → witness? → segOP? → nLockTime`
 
-**Full-fee accounting:**
-- Every segOP byte is charged at `4 weight units / byte` (no SegWit discount).
+**Full-fee accounting:**  
 
-**Commitment binding via P2SOP:**
-- A dedicated OP_RETURN output commits to a tagged SHA256 of the segOP payload:
+Every segOP byte is charged at **4 weight units / byte** (no SegWit discount).
 
-`segop_commitment = TAGGED_HASH("segop:commitment", segop_payload)`
+**Commitment binding via P2SOP:**  
 
-**Unified marker + flag signaling:**
-  - `marker = 0x00`  
-  - `flag` bitfield:  
-    - `0x01` = SegWit present  
-    - `0x02` = segOP present  
-    - `0x04` and above = reserved
+A dedicated OP_RETURN output commits to a tagged SHA256 of the segOP payload using the tagged-hash convention defined in §7.1:
 
-**Prunable payloads:**
-- Nodes validate segOP payloads and commitments, then may prune segOP bytes, similar to block pruning today.  
+```
+segop_commitment = TAGGED_HASH("segop:commitment", segop_payload)
+```
 
-**Soft-fork compatible:**
-- `txid` and `wtxid` are unchanged; legacy nodes accept segOP transactions.
+where TAGGED_HASH(tag, msg) is defined in §7.1 as:
+
+```
+TAG = SHA256(tag)
+TAGGED_HASH(tag, msg) = SHA256(TAG || TAG || msg)
+```
+
+Unified marker + flag signaling:
+
+```
+marker = 0x00
+```
+
+flag bitfield:
+
+`0x01` = SegWit present
+
+`0x02` = segOP present
+
+`0x04` and above = reserved
+
+Prunable payloads:
+
+Nodes must fully validate segOP payload bytes on block acceptance.
+
+After validation and after the payload falls outside their retention window, nodes MAY prune only the segOP payload bytes, while retaining all consensus-critical block, tx, script, and commitment data.
+
+Soft-fork compatible:
+
+- `txid` and `wtxid` are unchanged; legacy nodes accept `segOP` transactions.
 
 ## 3. Transaction Wire Layout
 
-Extended transactions appear on the wire as follows (little-endian where noted):
+Extended transactions appear on the wire as follows:
 
 ```
     [ nVersion (4 bytes, LE) ]
@@ -83,466 +105,998 @@ Extended transactions appear on the wire as follows (little-endian where noted):
     [ nLockTime (4, LE) ]
 ```
 
-SegWit and segOP can be present independently or together, as indicated by the `flag` bitfield.
+SegWit and segOP can appear independently or together.
 
 ## 4. Marker and Flag Definition
 
 ### 4.1 Marker and Flag
 
-| Field  | Size (bytes) | Value / Type | Purpose                                   |
-|--------|--------------|--------------|-------------------------------------------|
-| marker | 1            | 0x00         | Signals "extended transaction" format     |
-| flag   | 1            | bitfield     | Indicates presence of SegWit and/or segOP |
+| Field  | Size | Value | Purpose |
+|--------|------|--------|----------|
+| marker | 1    | 0x00   | Signals extended transaction format |
+| flag   | 1    | bitfield | Indicates presence of SegWit and/or segOP |
 
 ### 4.2 Flag Bits
 
-| Bit | Hex  | Meaning        |
-|-----|------|----------------|
+| Bit | Hex  | Meaning |
+|-----|------|----------|
 | 0   | 0x01 | SegWit present |
-| 1   | 0x02 | segOP present  |
-| 2   | 0x04 | Reserved       |
+| 1   | 0x02 | segOP present |
+| 2   | 0x04 | Reserved |
 
 ### 4.3 Examples
 
-| Flag | Binary     | Meaning         |
-|------|------------|-----------------|
-| 0x01 | 0000 0001  | SegWit only     |
-| 0x02 | 0000 0010  | segOP only      |
-| 0x03 | 0000 0011  | SegWit + segOP  |
+| Flag | Binary     | Meaning           |
+|------|------------|-------------------|
+| 0x01 | 00000001   | SegWit only       |
+| 0x02 | 00000010   | segOP only        |
+| 0x03 | 00000011   | SegWit + segOP    |
 
-For SegWit + segOP transactions, the bytes immediately following `nVersion` are:`00 03`.
+For SegWit + segOP, bytes after `nVersion` are: `00 03`.
 
 ### 4.4 Parsing Rules
 
-**Legacy Compatibility**
-- Legacy nodes interpret `marker = 0x00` as a zero-length `vin` and reject such transactions; upgraded nodes detect the `marker`–`flag` pair before normal deserialization.
+**Legacy Compatibility**  
 
-**Extended Detection**
-- If bit 0 is set (`flag & 0x01`), SegWit data follows `vout`.  
-- If bit 1 is set (`flag & 0x02`), segOP data follows SegWit (if present) or directly follows `vout` (if SegWit absent).
+Legacy nodes misinterpret `marker=0x00`, so upgraded nodes detect the marker–flag pair before normal parsing.
 
-**Pruning Behavior**
-- Nodes that prune SegWit or segOP data may skip over these sections during block validation after verifying that Merkle roots and commitments match.
+**Extended Detection**  
 
-**Reserved Bits**
-- Bits ≥ `0x04` are reserved and MUST be ignored by compliant parsers to allow future extensions without breaking compatibility.
+- If `flag & 0x01`, SegWit follows `vout`.
+- If `flag & 0x02`, segOP follows SegWit (or directly after vout).
+
+**Pruning Behaviour**  
+
+After a block has been fully validated (including segOP payload and P2SOP commitment) and its segOP payload has been pruned, nodes MAY omit re-reading or re-validating the pruned segOP bytes during later history checks (for example, re-verifying old blocks), because any modification to the segOP payload would change the P2SOP commitment, Merkle root, and block hash.
 
 ## 5. segOP Section
 
-A segOP section is appended after witness (if present) and before `nLockTime`:
+### 5.1 segOP Section Definition
+
+A segOP section is appended:
 
 ```
-    [ segop_marker  = 0x53 ]        # ASCII 'S'
-    [ segop_flag    = 0x01 ]        # segOP v1
-    [ segop_len     = <varint> ]    # length of payload in bytes
-    [ segop_payload (segop_len bytes) ]
+[ segop_marker = 0x53 ]
+[ segop_flag   = 0x01 ]
+[ segop_len    <varint> ]
+[ segop_payload ]
 ```
 
-Consensus rules:
+A segOP section is defined as the contiguous sequence:
 
-- For segOP v1, `segop_flag` MUST be `0x01`. Any other value is invalid.  
-- `segop_len` MUST NOT exceed `MAX_SEGOP_TX_BYTES`.  
-- The transaction MUST be rejected if the serialization does not contain exactly `segop_len` bytes of segOP payload.
+[ segop_marker ][ segop_flag ][ segop_len ][ segop_payload ]
 
-## 5.2 TLV Payload (Mandatory Format)
+A transaction with segOP present MUST contain exactly one such segOP section.
 
-Each segOP payload MUST be encoded as a sequence of TLV records:
+Consensus:
 
-    [type (1 byte)] [len (1 byte)] [value (len bytes)]
+- `segop_flag` MUST be `0x01` for v1.
+- `segop_len` MUST NOT exceed `MAX_SEGOP_TX_BYTES`.
+- Payload length MUST match encoding exactly.
+- The transaction MUST contain exactly one `P2SOP output`.
+- The transaction MUST contain exactly one `segOP` section.
+- `P2SOP` MUST NOT appear in non-segOP transactions.
+- `segOP` MUST appear only after `SegWit` (if present) and before `nLockTime`.
 
-Where:
+## 5.2 TLV Payload (Mandatory)
 
-- `type`: 1-byte unsigned integer.  
-- `len` : 1-byte unsigned integer, length of `value` in bytes.  
-- `value`: `len` bytes of opaque data.
+The segOP payload (segop_payload) is defined as a concatenation of one or more TLV records:
 
-### 5.2.1 TLV Well-Formedness (Consensus)
+```
+[type (1 byte)] [len (varint)] [value (len bytes)]
+```
 
-Let `segop_len` be the total payload length.
+**TLV rules (consensus)**
 
-Starting from offset `0`:
+- Each TLV record MUST be well-formed.
+- `type` is a single byte (0–255).
+- `len` is a Bitcoin-style varint, allowing lengths from 0 to `MAX_SEGOP_TX_BYTES`.
+- `value` MUST be exactly `len` bytes.
+- TLVs MUST appear back-to-back with no padding.
+- Unknown TLV types MUST be skipped.
+- The entire concatenated TLV stream MUST be exactly `segop_len` bytes.
 
-1. If `offset == segop_len`, stop (valid end).  
-2. If `offset > segop_len`, invalid.  
-3. Read `type` (1 byte).  
-4. Read `len` (1 byte).  
-5. If `offset + 2 + len > segop_len`, invalid (TLV overruns payload).  
-6. Advance `offset += 2 + len` and repeat.
+Rationale
 
-At the end of parsing, the transaction is valid **only if** `offset == segop_len`. Any trailing bytes, truncated TLV, or overflow MUST make the transaction invalid.
+- A payload may consist of one large TLV (simple use cases).
+- A payload may contain multiple TLVs (structured use cases).
+- TLV structure allows:
+  - Metadata + body separation
+  - Multiple logical components (e.g., headers, proofs, commitments)
+  - Backwards/forwards compatibility
+  - Selective parsing
+  - Explicit Encoding Guarantee
 
-### 5.2.2 Type Semantics
+To avoid reviewer confusion:
 
-- TLVs MAY appear in any order.  
-- Duplicate `type` values are allowed.  
-- Unknown `type` values are allowed and treated as opaque by consensus.  
-- Higher-layer protocols MAY assign semantics to types. Future soft-forks MAY define special meaning for specified types; old nodes will continue to treat them as opaque data.
-
-**Example segOP payload:**
-
-    01 10 7365674f5020544c562074657374   # type=1, len=16, "segOP TLV test"
-    02 04 00000001                       # type=2, len=4, app-specific value
+In segOP v1, len is a Bitcoin varint. This allows TLVs to range from 0 bytes up to the full segOP payload limit. Applications may encode their entire payload in a single TLV or split it into multiple TLVs as needed.
 
 ## 6. Worked Example (SegWit + segOP, flag = 0x03)
 
-Illustrative only (not a fully valid transaction):
+The following is an illustrative (non-signed) transaction showing SegWit and
+segOP together. Hex values are examples only.
 
-    01000000                      # nVersion
-    00 03                         # marker + flag (SegWit + segOP)
+```
+(tx start)
 
-    01                            # vin_count = 1
-    aa..aa (32 bytes)             # prevout hash
-    00000000                      # prevout index
-    00                            # scriptSig_len
-    ffffffff                      # nSequence
+  01000000                                # nVersion = 1
 
-    02                            # vout_count = 2
+  00 03                                   # marker=0x00, flag=0x03 (SegWit + segOP)
 
-    # vout0: P2SOP commitment (example script only)
-    0000000000000000              # value = 0
-    23                            # scriptPubKey_len = 35
-    6a 23 534f50 <32-byte commit> # OP_RETURN "SOP" <commit>
+  01                                      # vin_count = 1
 
-    # vout1: P2WPKH
-    a086010000000000              # value
-    16                            # scriptPubKey_len = 22
-    00 14 00112233445566778899aabbccddeeff00112233
+    <32 bytes>                            # prevout_hash
+    00000000                              # prevout_index
+    00                                    # scriptSig length
+    ffffffff                              # nSequence
 
-    # witness for the input (flag & 0x01)
-    02                            # number of stack items
-    47 <sig71>                    # signature
-    21 <pub33>                    # pubkey
+  02                                      # vout_count = 2
 
-    # segOP section (flag & 0x02)
-    53                            # segop_marker
-    01                            # segop_flag (v1)
-    16                            # segop_len = 22 bytes
-    01 10 7365674f5020544c562074657374  # TLV type 1
-    02 04 00000001                      # TLV type 2
+    # vout0 — P2SOP commitment
+    0000000000000000
+    27
+      6a                                  # OP_RETURN
+      25                                  # PUSHDATA(37)
+      50 32 53 4f 50                      # ASCII "P2SOP"
+      <32-byte segop_commitment>
 
-    00000000                      # nLockTime
+    # vout1 — P2WPKH
+    a086010000000000
+    16
+      00
+      14
+      <20-byte pubkey hash>
+
+  # SegWit witness
+  02
+    47 <signature>
+    21 <pubkey>
+
+  # segOP section
+  53                                      # segop_marker 'S'
+  01                                      # segop_flag v1
+  
+  18                                      # segop_len = 24 bytes (varint 0x18)
+
+    # TLV #1
+    01                                    # type = 1
+    10                                    # len  = 16 (varint 0x10)
+      73 65 67 4f 50 20 54 4c 56 20 74 65 73 74 21 21
+      # "segOP TLV test!!"
+
+    # TLV #2
+    02                                    # type = 2
+    04                                    # len  = 4 (varint 0x04)
+      00 00 00 01
+
+  00000000                                # nLockTime
+
+(tx end)
+```
+
+TLV size breakdown:
+
+```
+TLV1: 1(type) + 1(len varint) + 16(value) = 18 bytes
+TLV2: 1(type) + 1(len varint) + 4(value)  = 6 bytes
+
+Total = 24 bytes = segop_len
+```
+
+### 6.1 Example TLV Structures (Informative)
+
+Below are example TLV layouts illustrating real-world uses.
+
+#### 6.1.1 Example A — One Large TLV (simple apps)
+
+A simple inscription, file, or large proof:
+
+```
+[type=0x10][len=varint(64000)][value...64,000-byte blob...]
+```
+
+Structure:
+
+```
++--------+--------------------+--------------------+
+| 0x10   | varint(64,000)     | 64,000 bytes data  |
++--------+--------------------+--------------------+
+```
+
+Use cases:
+
+- Inscriptions
+- Large proofs
+- Merkleized application blobs
+- ZK-STARK traces
+
+#### 6.1.2 Example B — Metadata + Body
+
+Payload includes metadata TLV + big content TLV:
+
+```
+01 0A                <10-byte metadata>
+10 <varint(64000)>   <64,000-byte raw data>
+```
+
+Meaning:
+
+```
+TLV 0x01 → “metadata” (10 bytes)
+TLV 0x10 → “main blob” (64 KB)
+```
+
+This allows light-weight parsers to read type 0x01 (metadata) and skip over the large 0x10 blob without parsing it.
+
+#### 6.1.3 Example C — Multi-component L2 rollup
+
+```
+01 05                <“L2v1”>
+10 20                <32-byte batch commitment>
+11 20                <32-byte fraud-proof root>
+12 A0                <160-byte validator set snapshot>
+20 <varint(64000)>   <large state delta>
+```
+
+This provides a structured rollup batch:
+
+```
+Type  Meaning
+0x01  Protocol version (“L2v1”)
+0x10  Batch commitment root
+0x11  Fraud/submission root
+0x12  Validator set metadata
+0x20  Actual state delta
+```
+
+#### 6.1.4 Example D — Vault metadata + auxiliary data
+
+```
+01 20   <vault policy blob>
+02 04   <relative locktime>
+03 01   <flags>
+10 20   <backup key commitment>
+```
+
+This shows structured, multi-field metadata inside one segOP payload, where each TLV is small but semantically distinct.
+
+#### 6.1.5 Example E — “Envelope + Body” pattern
+
+A TLV envelope describing the content, then a raw TLV containing it:
+
+```
+01 0F   <“mime:application/json”>
+02 50   <80-byte JSON>
+```
+
+Here:
+
+- `0x01` declares the media type.
+- `0x02` carries the actual JSON body.
+
+#### 6.1.6 Example F — Multiple optional extensions
+
+```
+01 01                <version byte>
+02 20                <public tag / ID>
+03 20                <signature commitment>
+10 <varint(60000)>   <~60 KB main blob>
+11 20                <optional auxiliary root>
+```
+
+This illustrates:
+
+- A small fixed “header” region (version / IDs / commitments).
+- A large main blob (0x10).
+- An optional extension TLV (0x11) that higher-layer protocols may or may not understand.
 
 ## 7. IDs and Hashing
 
-segOP preserves existing transaction identifiers and optionally allows implementations to define an extended ID.
+### 7.1 Tagged-hash convention
 
-| ID        | Includes                                        | Purpose                                |
-|----------|--------------------------------------------------|----------------------------------------|
-| txid     | nVersion + vin + vout + nLockTime                | Legacy transaction ID (unchanged)      |
-| wtxid    | As per BIP141 (incl. witness, excludes segOP)    | SegWit ID (unchanged)                  |
-| fullxid* | Entire extended tx (incl. segOP)                 | Optional extended/debugging identifier |
-
-\* `fullxid` is not a consensus concept; this specification does not standardise any particular RPC name or require nodes to expose it. Implementations MAY define a debugging / extended ID that hashes the full extended serialization.
-
-### 7.1 Legacy txid
-
-Unchanged. Computed exactly as today:
-
-- Serialize transaction without `marker`, `flag`, witness data, or segOP section.
-- Compute double SHA-256.
-
-segOP and witness sections MUST NOT affect `txid`.
-
-### 7.2 wtxid (Unchanged)
-
-Follows existing BIP141 semantics; does not include segOP in the hash.
-
-### 7.3 fullxid (Optional)
-
-Defined (if implemented) as:
-
-- Serialization **including** `marker`, `flag`, witness data, and segOP section.
-- `fullxid = SHA256d(serialization_with_marker_flag_witness_segop)`
-
-Consensus does not depend on `fullxid`.
-
-## 8. Weight and Fee Accounting
-
-segOP bytes are charged at full base weight:
-
-    segop_weight = 4 * segop_bytes
-
-Total block weight becomes:
-
-    block_weight = base_weight + witness_weight + segop_weight
-
-Where:
-
-- `base_weight` and `witness_weight` are as defined in BIP141.  
-- `segop_bytes` is the value of `segop_len` for each transaction.  
-
-### 8.1 Per-Transaction segOP Limit (Consensus)
-
-Consensus rule:
-
-    segop_bytes <= MAX_SEGOP_TX_BYTES
-
-For segOP v1:
-
-- `MAX_SEGOP_TX_BYTES = 64_000` (64 KB)
-
-Transactions that exceed `MAX_SEGOP_TX_BYTES` MUST be invalid.
-
-### 8.2 Per-Block segOP Limit (Policy)
-
-It is RECOMMENDED that nodes and miners apply a policy limit on total segOP usage per block:
-
-    sum(segop_bytes for all segOP tx in block) <= MAX_SEGOP_BLOCK_BYTES
-
-Suggested default:
-
-- `MAX_SEGOP_BLOCK_BYTES = 400_000`
-
-This is deliberately defined as **policy**, not consensus, unless a later soft-fork explicitly promotes it to a consensus rule.
-
-## 9. P2SOP – Pay-to-SegOP Output Type
-### 9.1 Purpose
-
-P2SOP is the on-chain commitment and signal for segOP payloads:
-
-- Indicates that a transaction carries segOP data.  
-- Binds the payload by hash.  
-- Provides a stable index for external systems to locate associated payloads.  
-
-### 9.2 Script Template
-
-P2SOP uses a dedicated OP_RETURN script:
+segOP uses a standard tagged-hash construction, consistent with BIP340-style tagging. For any `tag` (ASCII string) and message `msg`:
 
 ```
-OP_RETURN 0x25 5032534f50 <32-byte commitment>
-# Hex: 6a 25 5032534f50 <32-byte commitment>
+TAG = SHA256(tag)
+TAGGED_HASH(tag, msg) = SHA256(TAG || TAG || msg)
 ```
 
-Readable as:
+All tagged hashes in this specification (e.g. P2SOP commitments and fullxid) use this convention.
+
+### 7.2 ID definitions
+
+segOP preserves existing Bitcoin identifiers and introduces an optional extended identifier:
+
+| ID | Includes | Purpose |
+|----|----------|---------|
+| txid | nVersion + vin + vout + nLockTime | Legacy transaction ID |
+| wtxid | BIP141 witness-inclusive serialization | SegWit transaction ID |
+| fullxid | Entire extended transaction serialization (see below) | Optional extended ID |
+
+### 7.2.1 txid (unchanged)
+
+`txid` is computed exactly as in pre-segOP Bitcoin:
+
+Serialize the transaction without:
+
+- Marker.
+- Flag.
+- Any SegWit witness data.
+- Any segOP section.
+
+Compute SHA256d (double-SHA256) over that legacy serialization.
+
+segOP and witness fields MUST NOT affect txid.
+
+### 7.2.2 wtxid (unchanged)
+
+`wtxid` is unchanged from BIP141. The serialization used to compute `wtxid` remains exactly the BIP141 witness serialization and does **not** include the segOP section.
+
+segOP extends the wire-format transaction by appending an additional segOP section after witness and before `nLockTime`, but this extended region is not part of the `wtxid` computation. 
+
+`wtxid` remains the SegWit witness-inclusive transaction ID as defined in BIP141.
+
+### 7.2.3 fullxid (segOP extended ID)
+
+Implementations MAY compute an optional extended transaction identifier `fullxid` that commits to the entire segOP-extended serialization, including segOP bytes, using the tagged-hash convention in §7.1.
+
+Let extended_serialization be the byte sequence:
 
 ```
-OP_RETURN "P2SOP" <32-byte hash>
-```
-
-Properties:
-- Unspendable (standard OP_RETURN semantics).
-- Easy to scan for the literal ASCII string “P2SOP”.
-- Serves as the canonical segOP commitment output.
-
-### 9.3 Commitment Definition
-
-segOP commitment uses a tagged-hash construction for domain separation, similar in spirit to BIP340-style tagged hashes.
-
-Let:
-
-```
-TAG = SHA256("segop:commitment")
-```
-
-Define:
-
-```
-TAGGED_HASH(tag, m) = SHA256(TAG || TAG || m)   # where TAG = SHA256(tag)
+nVersion ||
+marker || flag ||
+vin (all inputs, as in extended tx format) ||
+vout (all outputs) ||
+[witness data, if present] ||
+[segOP section, if present] ||
+nLockTime
 ```
 
 Then:
 
 ```
+fullxid_tag = "segop:fullxid"    # ASCII string
+fullxid     = TAGGED_HASH(fullxid_tag, extended_serialization)
+```
+
+Notes:
+
+`fullxid` is not used by segOP v1 consensus rules and is not required for block or transaction validity.
+
+`fullxid` is intended for tooling, debugging, indexing, and protocols that wish to commit to the full segOP-extended transaction form in a single identifier.
+
+## 8. Weight and Fees
+
+For block weight, segop_weight is added to the existing block weight as defined in BIP141; segOP bytes are charged at 4 WU/byte with no discount.
+
+```
+segop_weight = 4 * segop_bytes
+```
+
+Consensus max per-tx:
+
+```
+MAX_SEGOP_TX_BYTES = 64,000
+```
+
+Recommended policy per-block:
+
+```
+MAX_SEGOP_BLOCK_BYTES = 400,000
+```
+
+## 9. P2SOP – Pay-to-SegOP
+
+### 9.1 P2SOP Commitment
+
+Each segOP payload is bound to its transaction by a single P2SOP commitment output, which is an OP_RETURN script carrying a tagged hash of the segOP payload.
+
+The canonical `scriptPubKey` for a P2SOP output in segOP v1 is:
+
+```
+27 6a 25 5032534f50 <32-byte segop_commitment>
+```
+
+Where:
+
+```
+27 — scriptPubKey length in bytes (39 decimal)
+
+6a — OP_RETURN
+
+25 — PUSHDATA(37) — push 37 bytes of data
+
+50 32 53 4f 50 — ASCII "P2SOP" (5 bytes: P 2 S O P)
+
+<32-byte segop_commitment> — 32-byte commitment to the segOP payload
+
+Total pushed data = 5 + 32 = 37 bytes, so the full scriptPubKey length is 0x27 bytes (1 byte OP_RETURN + 1 byte push opcode + 37 bytes data).
+```
+
+The commitment segop_commitment is computed using the tagged-hash convention from §7.1:
+
+```
 segop_commitment = TAGGED_HASH("segop:commitment", segop_payload)
 ```
 
-The 32-byte hash `segop_commitment` is placed as the final data push in the P2SOP script.
+Example:
 
-*Any change to this commitment scheme would require an explicit update before BIP finalisation or activation.*
+```
+TAG = SHA256("segop:commitment")              # over the ASCII string
+segop_commitment = SHA256(TAG || TAG || segop_payload)
+```
 
-### 9.4 Relationship and 1:1 Mapping Rules (Consensus)
+This segop_commitment is what appears as the <32-byte segop_commitment> in the P2SOP scriptPubKey above.
 
-For segOP v1, the mapping between segOP and P2SOP is strict:
+### 9.2 Relationship and 1:1 Mapping Rules (Consensus)
 
-- If `(flag & 0x02) == 0` (no segOP section):  
+For segOP v1, the relationship between segOP and P2SOP is strict:
+
+- If `(flag & 0x02) == 0` (no segOP):  
   - The transaction MUST NOT contain any P2SOP outputs.
- 
+
 - If `(flag & 0x02) != 0` (segOP present):  
   - The transaction MUST contain **exactly one** segOP section.  
   - The transaction MUST contain **exactly one** P2SOP output.
 
-Any transaction that violates these constraints MUST be considered invalid under segOP consensus rules.
+Any violation MUST make the transaction invalid under segOP consensus.
 
-### 9.5 Example Pair
+### 9.3 Example Pair
 
-P2SOP output script (example):
-
-```
-6a23 534f50 3e7d08b77c3a5d60e8d01fcfc0e5aabde3f4b090c41211f1f8a9e7a71b76e9c5
-```
-
-segOP section (example):
+P2SOP output script (example, matching §6 and §9.1):
 
 ```
-    53 01 16
-    01 10 7365674f5020544c562074657374  # TLV type 1 (text)
-    02 04 00000001                      # TLV type 2 (app data)
+6a25 5032534f50 <32-byte commitment>
 ```
 
-The following MUST hold:
+Where:
+
+- `6a` — `OP_RETURN`
+- `25` — `PUSHDATA(37)` — push 37 bytes of data
+- `50 32 53 4f 50` — ASCII `"P2SOP"` (5 bytes)
+- `<32-byte commitment>` — `segop_commitment` (32 bytes)
+
+Total pushed data = `5 + 32 = 37` bytes, and the full `scriptPubKey` length is 39 bytes (`0x27`), (1 byte `OP_RETURN` + 1 byte push opcode + 37 bytes data).
+
+Corresponding segOP section (example):
 
 ```
-TAG = SHA256("segop:commitment")
-segop_commitment = SHA256(TAG || TAG || segop_payload)
+53 # segop_marker = 0x53 ('S')
+01 # segop_flag = 0x01 (segOP v1)
+18 # segop_len = 24 bytes
+
+01 10 # type = 1, len = 16
+73 65 67 4f 50 20 54 4c 56 20 74 65 73 74 21 21
+# "segOP TLV test!!" (16 bytes)
+
+02 04 # type = 2, len = 4
+00 00 00 01 # application-specific value (4 bytes)
 ```
 
-and the resulting 32-byte `segop_commitment` MUST equal the commitment embedded in the P2SOP output.
-
-### 9.6 Node Validation Logic (Pseudo)
-
-In pseudocode:
+TLV sizes:
 
 ```
-if (tx.flag & 0x02) { // segOP present
-    auto p2sop_outputs = find_P2SOP_outputs(tx.vout);
-    if (p2sop_outputs.size() != 1) {
-        return TX_CONSENSUS_ERROR("invalid_p2sop_count");
-    }
+TLV1: 1(type) + 1(len varint) + 16(value) = 18 bytes
+TLV2: 1(type) + 1(len varint) + 4(value)  = 6 bytes
 
-    if (!tx.has_segop_section || tx.segop_len == 0) {
-        return TX_CONSENSUS_ERROR("missing_segop_section");
-    }
+Total segop_payload = 18 + 6 = 24 bytes = 0x18
+```
 
-    if (tx.segop_len > MAX_SEGOP_TX_BYTES) {
-        return TX_CONSENSUS_ERROR("segop_too_large");
-    }
+For this example, the 32-byte `segop_commitment` placed in the P2SOP output is:
 
-    if (!is_valid_tlv_sequence(tx.segop_payload)) {
-        return TX_CONSENSUS_ERROR("segop_tlv_invalid");
-    }
+```
+segop_commitment = TAGGED_HASH("segop:commitment", segop_payload)
+```
 
-    uint256 commit = p2sop_outputs[0].commitment;
-    uint256 tag = SHA256("segop:commitment");
-    uint256 expected = SHA256(tag || tag || tx.segop_payload);
+### 9.4 Node Validation Logic (Pseudo)
 
-    if (expected != commit) {
-        return TX_CONSENSUS_ERROR("segop_commitment_mismatch");
-    }
+```
+if (tx.flag & 0x02) {
+    auto outs = find_P2SOP_outputs(tx);
+    if (outs.size() != 1)
+        return error;
+
+    if (!tx.has_segop_section)
+        return error;
+
+    if (tx.segop_len > MAX_SEGOP_TX_BYTES)
+        return error;
+
+    if (!is_valid_tlv(tx.segop_payload))
+        return error;
+
+    uint256 commit = outs[0].commitment;
+    uint256 expected = TAGGED_HASH("segop:commitment", tx.segop_payload);
+
+    if (expected != commit)
+        return error;
 } else {
-    // Non-segOP transaction MUST NOT use P2SOP
-    if (find_P2SOP_outputs(tx.vout).size() != 0) {
-        return TX_CONSENSUS_ERROR("p2sop_without_segop");
-    }
+    if (has_P2SOP_output(tx))
+        return error;
 }
 ```
 
-Result: each segOP transaction has exactly one P2SOP and one segOP payload; no orphan segOP sections, and no multiple P2SOP spam.
+# 10. Node Validation, Retention, and Pruning
 
-## 10. Node Storage, IBD, and Pruning
+segOP follows Bitcoin’s “validate everything, optionally prune old data” model but makes retention windows explicit.
 
-segOP follows the same fundamental pruning model as Bitcoin Core: nodes must validate everything during IBD and reorgs, but may discard old block data (including segOP payloads) once it is no longer needed for validation.
+## 10.1 Mandatory Validation at Tip
 
-### 10.1 IBD (Initial Block Download)
+For every segOP-bearing block, a segOP-aware node MUST:
 
-During IBD, a segOP-aware node:
-- Downloads full blocks, including segOP payloads.
+1. Obtain the **full segOP payload bytes**, either:  
+   - from local storage (if within retention window), or  
+   - by requesting them via `getsegopdata` (§11.4.1) from peers
+     advertising `NODE_SOP_RECENT` or `NODE_SOP_ARCHIVE`.
+2. Recompute the segOP commitment.
+3. Verify the P2SOP commitment matches.
+4. Only then mark the block valid and relay it.
 
-For each block, for each segOP transaction:
-- Parses the segOP section.
-- Verifies segop_len <= MAX_SEGOP_TX_BYTES.
-- Verifies TLV structure.
-- Computes segop_commitment and checks it against the P2SOP output.
+Nodes MUST NOT relay or accept a segOP-bearing block as valid until all segOP payloads are validated.
 
-Nodes MUST NOT prune segOP payloads from blocks that:
-- Have not yet been validated, or
-- Are still within the range needed for reorg safety.
+A segOP-aware fully validating node MUST apply segOP validation rules to every segOP-bearing block it accepts to its active chain, regardless of its later pruning policy.
 
-### 10.2 Consensus vs Storage
+## 10.2 Validation Window (Mandatory Minimum)
 
-Consensus cares about:
-- Correctness of segOP payloads at the time the block is accepted.
-- Correct commitments in P2SOP outputs.
-- Block headers, Merkle roots, and the UTXO set.
-- Consensus does not require nodes to retain raw segOP payload bytes forever.
+Nodes MUST retain segOP payloads for:
 
-Storage behaviour is a local policy choice:
-- A node MAY keep all segOP payload data (archival behaviour).
-- A node MAY discard segOP payloads from sufficiently old blocks (pruned behaviour), after validation and outside the reorg window.
+```
+W = 24 blocks
+```
 
-### 10.3 Example Pruning Policy
+This **Validation Window**:
 
-Implementations may expose a configuration such as:
+- Supports 1–4 block reorgs  
+- Supports miner time-rolling  
+- Prevents fetch/prune thrashing  
+- Ensures reliable block relay
 
-`-prunesegopheight=N`
+Applies regardless of operator settings.
 
-Meaning: 
-- For blocks at height h <= N, the node may delete stored segOP payload bytes from its local block storage.
+## 10.3 Operator Window (Optional)
 
-The node MUST still retain:
-- Block headers and Merkle roots.
-- Transaction data needed for txid, wtxid, and P2SOP commitments.
-- Enough recent blocks (including segOP payloads) to safely handle reorgs.
+Nodes MAY retain segOP payloads further using:
 
-A segOP-aware node that prunes payloads in this way:
-- Remains a fully validating node.
-- May legitimately refuse RPC requests for historical segOP payloads beyond the pruning point (e.g. returning an error such as “segOP data pruned – commitment only”).
+```
+-sopwindow=R     # R ≥ 0 blocks
+```
 
-### 10.4 Node Roles (Informal)
+- `R = 0` → only Validation Window  
+- `R = 144` → ~1 day  
+- `R = 288` → ~2 days  
 
-**Standard full node (segOP-aware, pruned):**
-- Validates all segOP payloads during IBD and as new blocks arrive.
-- Prunes segOP payloads and block bodies after they are sufficiently buried.
-- Mirrors Bitcoin’s existing pruned-node behaviour.
+This does not affect consensus.
 
-**Archival segOP node:**
-- Retains all segOP payloads and full block data.
-- Can serve historical segOP data to wallets, explorers, and protocols.
+## 10.4 Effective Retention Window
 
-**Legacy node (non-segOP-aware):**
-- Behaves exactly like current non-segOP Bitcoin Core.
-- Ignores segOP sections; does not enforce segOP rules.
-- Accepts any block valid under legacy rules.
+The Effective Retention Window `E` is not a separate window; it is simply the result of combining the mandatory Validation Window and the user-configured Operator Window into a single numeric retention horizon.
 
-## 11. Compatibility Summary
+Effective window:
 
-- `txid` is unchanged.
-- Existing SegWit behaviour (`wtxid`, `weight calculation`) is unchanged.
+```
+E = max(W, R)
+```
 
-segOP adds:
-- A new, post-witness data section.
-- An additional weight term.
-- A P2SOP-based tagged commitment check.
-- Blocks valid under segOP rules form a subset of blocks valid under legacy rules:
-- segOP is a soft-fork compatible extension to Bitcoin’s transaction format.
+Nodes MUST retain segOP payloads for:
 
-## 12. Summary
+```
+heights ∈ [ tip - E + 1 … tip ]
+```
 
-- segOP introduces a post-witness, TLV-structured, prunable data lane for arbitrary and structured payloads.
-- segOP data is fully fee-paying at 4 WU / byte.
-- Each segOP transaction has exactly one P2SOP output and one segOP payload, bound by a tagged SHA256 commitment.
-- Pruning behaviour mirrors existing Bitcoin node pruning: validate everything, optionally discard old payloads.
-- Archival nodes can retain all segOP data; normal nodes do not have to.
-- The design enables clean fee accounting, optional storage offloading, and future structured protocols (including quantum-safe schemes and rollups) without altering Bitcoin’s script semantics or transaction IDs.
+For blocks:
+
+```
+height < tip - E + 1
+```
+
+segOP payload MAY be pruned.
+
+Pruning MUST NOT remove:
+
+- tx fields  
+- P2SOP outputs  
+- commitments  
+- essential serialization
+
+## 10.5 Node Profiles (Informative)
+
+Below are the three types of node profiles.
+
+### 10.5.1 Validation Window Node  
+- `E = W = 24`
+- Retains segOP payloads for exactly the most recent 24 blocks.
+- Prunes segOP payloads older than 24 blocks.
+- Fully validates new blocks using payloads from window E = 24.
+
+### 10.5.2 Operator Window Node  
+- `E > W`  
+- Retains deeper history  
+- Suitable for routing/services
+
+### 10.5.3 Archive Window Node  
+- Retains all segOP payloads for the entire chain history (no segOP pruning).  
+- Serves historical segOP payload to other nodes, explorers, and L2 protocols.  
+- Voluntary; not consensus-required, but practically useful for full-history IBD and external indexing.
+
+### 10.5.4 Consensus vs Storage (Summary)
+
+- Consensus requires that any segOP-aware fully validating node verify segop_len, TLV well-formedness, and P2SOP commitments for every segOP-bearing block it accepts to its active chain.
+- Storage policy is independent: after validation, a node MAY prune segOP payload bytes for blocks older than its effective retention window `E` without affecting consensus.
+
+## 10.6 IBD (Initial Block Download)
+
+During IBD, a segOP-aware fully validating node:
+
+- Downloads blocks from its peers (preferably from Archive Window peers when full history is required).
+- For every segOP-bearing block that it **accepts to its active chain**, it MUST:
+  - parse the segOP section,
+  - verify `segop_len <= MAX_SEGOP_TX_BYTES`,
+  - enforce TLV well-formedness (§5.2),
+  - recompute and verify the P2SOP commitment (§9.1–9.4).
+
+Implementations MAY apply the same kinds of IBD shortcuts used for script validation today (e.g. assumevalid-style optimisations), but these are considered local policy and are not part of segOP’s consensus rules.
+
+# 11. segOP P2P Behaviour and Payload Relay
+
+## 11.1 Payload
+
+segOP payload bytes:
+
+- Are relayed with mempool transactions  
+- Are stored on disk within window `E`  
+- Are not included in compact block messages  
+- Are fetched via dedicated P2P messages as needed (§11.4)
+
+## 11.2 Service Bits
+
+segOP introduces two new **P2P service flags** that nodes use to advertise their segOP data-serving capabilities. These flags are part of the node’s `services` bitfield (e.g., in the `version` message and address gossip such as `addrv2`). They are **not** part of the transaction or block serialization, nor part of the segOP wire format.
+
+These service bits communicate what a node *can serve*, not what a transaction *contains*.
+
+### 11.2.1 NODE_SOP_RECENT
+
+`NODE_SOP_RECENT` is set **only if** the node can serve segOP payload bytes for at least the most recent **Validation Window**:
+
+```
+W = 24 blocks
+```
+
+A node sets this bit if and only if:
+
+```
+min_retained_height ≤ tip_height − W + 1
+```
+
+It is typically true for:
+
+- Validation Window nodes (`E = W = 24`),
+- Operator Window nodes (`E > W`),
+- Archive Window nodes (Full retention).
+
+Here `min_retained_height` is the lowest block height on the node’s active chain for which the node still retains segOP payload bytes.
+
+### 11.2.2 NODE_SOP_ARCHIVE
+
+`NODE_SOP_ARCHIVE` is set only if the node retains segOP payload bytes for **all blocks from genesis to the current tip** (i.e. it does not prune segOP payload at all).
+
+A node MUST clear this bit automatically if it prunes segOP payload bytes for any block on its active chain (i.e., if it no longer retains full history).
+
+Archive Window nodes are not required by consensus but are practically necessary for:
+
+- full-history segOP IBD,
+- L2 protocols anchored into segOP,
+- explorers, auditors, and long-range reconstruction tools.
+
+## 11.3 Inventory Types
+
+- `MSG_TX_SOP` — announces a segOP-bearing transaction  
+- `MSG_SOPDATA` — identifies a segOP payload object  
+
+Nodes MUST NOT advertise payloads they do not hold.
+
+## 11.4 segOP Payload Messages
+
+### 11.4.1 `getsegopdata`
+
+```
+getsegopdata {
+    txids: [32-byte txid, ...]
+}
+```
+
+Rules:
+
+- Non-empty list  
+- Max 64 txids  
+- Only send to peers advertising `NODE_SOP_RECENT` / `NODE_SOP_ARCHIVE`
+
+### 11.4.2 `segopdata`
+
+```
+segopdata [
+    {
+        txid:       32 bytes
+        sopver:     1 byte
+        soplen:     varint
+        soppayload: soplen bytes
+    },
+    ...
+]
+```
+
+Nodes MUST return exactly `soplen` bytes for each entry.
+
+If payload is pruned: respond with `notfound`.
+
+## 11.5 Segmented Responses (Optional)
+
+```
+{
+    txid: 32 bytes
+    sopver: 1
+    soplen: varint
+    offset: varint
+    chunk_data: bytes
+    is_last_chunk: bool
+}
+```
+
+Receivers MUST reassemble before commitment validation.
+
+## 11.6 Block Relay Semantics
+
+segOP follows the same relay model as SegWit: full blocks contain all data, while optimised block transports omit heavy data and require on-demand fetching.
+
+### 11.6.1 Full Block Relay (`block` message)
+
+Full blocks sent over P2P via the `block` message MUST include the full segOP section, including:
+
+- `segop_marker`
+- `segop_flag`
+- `segop_len`
+- `segop_payload` (the actual bytes)
+
+A node receiving a full block has all information required to:
+
+- validate TLV structure
+- recompute the P2SOP commitment
+- validate commitments before accepting the block
+
+Full blocks stored on disk (`blk*.dat`) SHOULD include segOP payload bytes for blocks within the node’s effective retention window `E`. Implementations MUST ensure that segOP payload bytes for heights in `[tip − E + 1 … tip]` are stored durably somewhere (whether inline in `blk*.dat` or in auxiliary files). Older blocks MAY have their segOP payload pruned.
+
+### 11.6.2 Optimised Relay (cmpctblock and similar transports)
+
+Compact blocks and other fast-relay formats (e.g., header-first, FIBRE-like schemes):
+
+MUST NOT include segOP payload bytes.
+
+MUST include:
+
+- block header  
+- transaction IDs / short IDs  
+- witness flags (if applicable)  
+- enough information to identify P2SOP outputs and their 32-byte commitments (for example, by including full scripts for segOP-bearing transactions or by encoding the commitments separately)
+
+Nodes receiving an optimised block must:
+
+- validate header + transaction skeleton,
+- fetch missing witness data (if SegWit applies),
+- fetch missing segOP payload bytes via `getsegopdata`,
+- validate P2SOP commitments,
+
+and only then accept and relay the block.
+
+### 11.6.3 Relay Requirement
+
+Nodes MUST NOT forward segOP-bearing blocks until the segOP payload has been:
+
+- acquired (if missing), and
+- validated against the P2SOP output.
+
+Nodes MUST NOT relay partially validated blocks.
+
+## 11.7 Compact Blocks
+
+Compact blocks SHOULD include a segOP bitmap or equivalent metadata whenever segOP-bearing transactions are present, but segOP payload bytes MUST NOT appear inside compact block messages. This specification does not fix a specific compact block encoding.
+
+## 11.8 IBD and Historical Reconstruction
+
+During IBD:
+
+- Prefer `NODE_SOP_ARCHIVE` peers for full history  
+- Validate segOP for new blocks  
+- Validation Window nodes do not need full-history re-fetch of pruned segOP payloads.
+
+Archive nodes support:
+
+- L2 rollups  
+- Explorers/indexers  
+- Forensic/audit reconstruction
+
+segOP cleanly distinguishes **Validation Window**, **Operator Window**, and **Archive Window** modes.
+
+## 11.9 DoS Mitigations, Rate Limits, and Policy Constraints
+
+Implementations MUST enforce bandwidth, CPU, and message-frequency limits to prevent denial-of-service attacks relating to segOP payload requests.
+All requirements in this section apply to the `getsegopdata` and `segopdata` messages defined in §11.4.
+
+### 11.9.1 Per-Message Limits
+
+Each `getsegopdata` message:
+
+- MUST contain **at most 64 txids**.  
+- MUST NOT exceed **4 KB** serialized.  
+- MUST NOT contain duplicate txids.  
+- SHOULD be ignored or penalized if malformed.
+
+Each `segopdata` message:
+
+- MUST contain at most **16 payload entries**.  
+- MUST NOT exceed the policy-defined outbound limit (default **128 KB**, hard cap **256 KB**).  
+- MUST NOT exceed **4×** the size of its corresponding inbound request.
+
+Violations MUST result in the message being discarded and MAY contribute to misbehavior scoring.
+
+### 11.9.2 Per-Peer Rate Limits
+
+Nodes MUST enforce:
+
+```
+max_getsegopdata_per_minute = 64
+```
+
+Excessive requesting MUST cause the node to stop serving the peer and MAY count toward a ban score.
+
+Peers requesting >256 KB/minute (policy) MAY be deprioritized or disconnected.
+
+### 11.9.3 Global Backpressure and Bandwidth Caps
+
+Nodes MUST enforce global bandwidth limits:
+
+```
+max_outbound_segop_bandwidth = 1 MB / 10 sec
+max_inbound_segop_bandwidth  = 1 MB / 10 sec
+```
+
+Nodes MAY delay or queue responses under congestion.
+
+### 11.9.4 Segmented Transfer Limits
+
+For segmented transfer (§11.4):
+
+- Abort if chunk timeout > **20 seconds**.  
+- Abort if cumulative chunk size > declared `soplen`.  
+- Penalize peers sending duplicate or inconsistent chunk offsets.  
+- Discard partial buffers after reassembly or cancellation.
+
+### 11.9.5 Invalid or Malicious Requests
+
+Nodes MUST treat the following as misbehavior conditions and SHOULD feed them into their existing peer scoring / banning framework (e.g. `Misbehaving()` and `ban_threshold` in Bitcoin Core):
+
+- Invalid `sopver`, incorrect `soplen`, or malformed TLV.
+- Requests for txids a peer did not announce.
+- Repeated requests for known-pruned payloads.
+- Providing payload bytes that fail P2SOP commitment validation.
+
+This specification does not define new scoring algorithms or ban thresholds; it only enumerates additional conditions that implementations SHOULD treat as misbehavior using their existing mechanisms.
+
+### 11.9.6 Amplification Protection
+
+To prevent response amplification:
+
+- The outbound/inbound ratio MUST NOT exceed **4:1**.  
+- Nodes MUST NOT serve segmented responses to peers exceeding bandwidth caps.  
+- Nodes MUST NOT serve payloads outside their retention window unless they advertise `NODE_SOP_ARCHIVE`.
+
+### 11.9.7 CPU and Memory Protections
+
+Nodes MUST:
+
+- Verify `soplen` before reading data.  
+- Reject requests causing repeated TLV scans.  
+- Limit concurrent chunk reassemblies (default policy: **8**).  
+- Discard chunk buffers immediately after processing.
+
+### 11.9.8 Interaction with Retention Windows
+
+After initial IBD and validation, nodes SHOULD NOT fetch segOP payload deeper than their effective window `E` (§10.4) — that is, for blocks with:
+
+```
+height < tip_height − E + 1
+```
+
+— unless they are explicitly configured as Archive Window nodes and peers advertise `NODE_SOP_ARCHIVE`.
+
+Requests for segOP payload outside a node’s retention horizon SHOULD be answered with `notfound`, unless the operator has explicitly opted into Archive behaviour.
+
+### 11.9.9 Summary
+
+Nodes MUST enforce:
+
+- Per-message limits  
+- Per-peer rate limits  
+- Global bandwidth caps  
+- Chunk-transfer protections  
+- Misbehavior penalties  
+- Amplification constraints  
+- Memory/CPU protections
+
+These mitigations ensure segOP cannot be used for bandwidth, CPU, or memory exhaustion attacks and remains consistent with Bitcoin's P2P security model.
+
+# 12. Compatibility Summary
+
+- `txid` is unchanged.  
+- `wtxid` (BIP141) is unchanged.  
+- SegWit semantics and script evaluation are unchanged.  
+- segOP introduces:
+  - a new post-witness data section,  
+  - full-fee weight accounting for payload bytes,  
+  - a P2SOP commitment output,  
+  - mandatory TLV structure,  
+  - prunable payloads with clearly defined retention windows.
+
+Blocks valid under segOP rules form a **subset** of blocks valid under legacy rules. segOP is a **soft fork** extension.
+
+# 13. Summary
+
+- segOP introduces a post-witness, TLV-structured, fully fee-paying, prunable data lane.  
+- Payload bytes are bound to the transaction via a P2SOP tagged-hash commitment.  
+- Each segOP transaction contains exactly **one** P2SOP and **one** segOP section.  
+- segOP defines explicit retention windows:
+  - **Validation Window** (mandatory 24 blocks).  
+  - **Operator Window** (user-configurable extension).  
+  - **Archive Window** (retain all segOP payloads for the entire chain history, no pruning).  
+- Payload relay uses dedicated P2P messages with strict DoS controls.  
+- segOP preserves backward compatibility with legacy nodes and existing transaction IDs.  
+- Provides a structured, future-proof foundation for data-bearing use cases including proofs, commitments, metadata, vault logic, and L2 anchoring.
+
+Because every segOP payload is deterministically committed via a single P2SOP output, and that output is included in the transaction Merkle root and block hash, segOP-aware nodes can safely prune raw payload bytes once they fall outside their effective retention window `E` without weakening consensus. Any attempt to alter pruned segOP data would change the P2SOP commitment and therefore the block hash, which both legacy and segOP-aware nodes would reject. When deeper inspection or reconstruction is needed, nodes can request historical segOP payloads from peers advertising `NODE_SOP_ARCHIVE` using `getsegopdata` / `segopdata`, without changing consensus rules or requiring all nodes to store full-history payloads.
 
 ---
 
-### Appendix A – Constants (segOP v1)
+# Appendix A — Constants (segOP v1)
 
-| Constant              | Value     | Type      | Description                                  |
-|-----------------------|-----------|-----------|----------------------------------------------|
-| MAX_SEGOP_TX_BYTES    | 64,000    | Consensus | Max segOP payload per transaction            |
-| MAX_SEGOP_BLOCK_BYTES | 400,000   | Policy    | Recommended max segOP bytes per block        |
-| TAG_SEGOP_COMMIT      | "segop:commitment" | String    | Domain separation tag for P2SOP commitment   |
-| SEGOP_VERSION         | 1         | Integer   | segOP v1 `segop_flag` value                  |
+| Constant              | Value     | Type      | Description |
+|-----------------------|-----------|-----------|-------------|
+| MAX_SEGOP_TX_BYTES    | 64,000    | Consensus | Per-tx segOP payload limit |
+| MAX_SEGOP_BLOCK_BYTES | 400,000   | Policy    | Recommended per-block segOP usage |
+| TAG_SEGOP_COMMIT      | "segop:commitment" | String | Domain tag for P2SOP |
+| SEGOP_VERSION         | 1         | Integer   | `segop_flag` value |
 
+---
 
-### Appendix B – Future Extensions (Reserved Flags)
+# Appendix B — Future Extensions (Reserved Flags)
 
-| Bit / Hex | Name             | Description                                           |
-|-----------|------------------|-------------------------------------------------------|
-| 0x04      | segOP-Wit / Qsig | Reserved for future segregated sub-lane extensions   |
-| 0x08–0x80 | Reserved         | Reserved for future extensions                       |
+| Bit | Hex  | Name         | Description |
+|-----|------|--------------|-------------|
+| 2   | 0x04 | segOP-Wit / Qsig (reserved) | Placeholder for future segregated sub-lanes |
+| 3–7 | 0x08–0x80 | Reserved | Future soft-fork extensions |
 
+---
 
-### Appendix C – Deployment (Suggested Outline)
+# Appendix C — Deployment (Suggested)
 
-| Parameter            | Description                                |
-|----------------------|--------------------------------------------|
-| Deployment mechanism | BIP8 (versionbits)                         |
-| Bit                  | TBD                                        |
-| Start time           | TBD                                        |
-| Timeout              | TBD                                        |
-| Activation threshold | e.g. 90% signalling over 2016 blocks       |
+| Parameter            | Description |
+|----------------------|-------------|
+| Deployment mechanism | BIP8 (versionbits) |
+| Bit                  | TBD |
+| Start time           | TBD |
+| Timeout              | TBD |
+| Threshold            | e.g. 90% signalling over 2016 blocks |
 
+---
 
-End of Specification
+# Appendix D - Diagrams (Informative)
+
+TBD
+
+---
+
+# Appendix E - segOP Transaction Lifecycle (Informative)
+
+TBD
+
+---
+
+End of segOP-Extended Transaction Specification
+
