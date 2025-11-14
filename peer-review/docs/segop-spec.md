@@ -536,7 +536,7 @@ segOP extends the wire-format transaction by appending an additional segOP secti
 
 Implementations MAY compute an optional extended transaction identifier `fullxid` that commits to the entire segOP-extended serialization, including segOP bytes, using the tagged-hash convention in §7.1.
 
-Let extended_serialization be the byte sequence:
+Let `extended_serialization` be the byte sequence:
 
 ```
 nVersion ||
@@ -551,15 +551,27 @@ nLockTime
 Then:
 
 ```
-fullxid_tag = "segop:fullxid"    # ASCII string
-fullxid     = TAGGED_HASH(fullxid_tag, extended_serialization)
+fullxid_tag = "segop:fullxid" # ASCII string
+fullxid = TAGGED_HASH(fullxid_tag, extended_serialization)
 ```
 
-Notes:
+#### Properties
 
-`fullxid` is not used by segOP v1 consensus rules and is not required for block or transaction validity.
+- `fullxid` **commits to segOP payload bytes**. Any modification to the payload, its TLV structure, or its declared length changes the `fullxid`, even though the legacy `txid` and `wtxid` remain unchanged.
+- `fullxid` is **not a consensus identifier** in segOP v1. It is not used in block validation, script execution, or relay policy.
+- `fullxid` is **stable across pruning**: it is defined over the logical extended serialization, regardless of whether a node has pruned segOP bytes for a given block. A pruned node MAY need to refetch segOP payload bytes in order to recompute `fullxid`.
+- `fullxid` has no ordering or malleability constraints and MUST NOT influence consensus-critical behaviour.
 
-`fullxid` is intended for tooling, debugging, indexing, and protocols that wish to commit to the full segOP-extended transaction form in a single identifier.
+#### Intended Uses (informative)
+
+`fullxid` is designed for:
+
+- explorers and transaction indexers,
+- debugging and implementation tracing,
+- higher-layer protocols that wish to reference the full segOP-extended form,
+- archival and reconstruction tools (particularly when segOP payloads are pruned but still retrievable from peers).
+
+`fullxid` MUST NOT be required by consensus, and nodes MUST remain valid segOP implementations even if they do not compute or store `fullxid`.
 
 ## 8. Weight and Fees
 
