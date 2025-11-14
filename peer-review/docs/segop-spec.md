@@ -1164,12 +1164,20 @@ Because every segOP payload is deterministically committed via a single P2SOP ou
 
 # Appendix A — Constants (segOP v1)
 
-| Constant              | Value     | Type      | Description |
-|-----------------------|-----------|-----------|-------------|
-| MAX_SEGOP_TX_BYTES    | 64,000    | Consensus | Per-tx segOP payload limit |
-| MAX_SEGOP_BLOCK_BYTES | 400,000   | Policy    | Recommended per-block segOP usage |
-| TAG_SEGOP_COMMIT      | "segop:commitment" | String | Domain tag for P2SOP |
-| SEGOP_VERSION         | 1         | Integer   | `segop_version` value |
+| Constant                  | Value       | Type       | Description |
+|---------------------------|-------------|------------|-------------|
+| MAX_SEGOP_TX_BYTES        | 64,000      | Consensus  | Maximum segOP payload per transaction. Enforced during mempool acceptance and block validation. |
+| MAX_SEGOP_BLOCK_BYTES     | 400,000     | Policy     | Recommended per-block total segOP payload. Not consensus; guides mining and relay policy. |
+| SEGOP_MARKER              | 0x53        | Constant   | ASCII `'S'`. Required byte indicating start of segOP section. |
+| SEGOP_VERSION             | 1           | Integer    | Version byte for segOP v1 payloads (`segop_version`). |
+| TAG_SEGOP_COMMIT          | "segop:commitment" | String | Tagged-hash domain for computing the P2SOP commitment. |
+| TAG_FULLXID               | "segop:fullxid"     | String | Tagged-hash domain for computing the optional `fullxid`. |
+
+## Notes
+
+- **Consensus constants** must be enforced during transaction validation and block acceptance.
+- **Policy constants** influence node behaviour but do not affect consensus.
+- **Tagged-hash domains** (TAG_SEGOP_COMMIT, TAG_FULLXID) MUST be treated as exact ASCII strings.
 
 ---
 
