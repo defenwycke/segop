@@ -1203,13 +1203,40 @@ These reserved bits MUST be set to zero in segOP v1 and MUST cause transaction r
 
 # Appendix C — Deployment (Suggested)
 
+This appendix outlines a recommended deployment mechanism for segOP v1.  
+
+These parameters are **not consensus requirements** but suggested values for a versionbits-based activation.
+
 | Parameter            | Description |
 |----------------------|-------------|
-| Deployment mechanism | BIP8 (versionbits) |
-| Bit                  | TBD |
-| Start time           | TBD |
-| Timeout              | TBD |
-| Threshold            | e.g. 90% signalling over 2016 blocks |
+| Deployment mechanism | **BIP8 (versionbits)** — Miner signalling with optional mandatory activation. |
+| Bit                  | **TBD** — Versionbits bit position to be assigned. |
+| Start time           | **TBD** — Median-time-past (MTP) timestamp at which signalling begins. |
+| Timeout              | **TBD** — MTP timestamp at which signalling ends. |
+| Threshold            | Example: **90% miner signalling** within a 2016-block retarget period. |
+
+## Recommended Activation Flow (Informative)
+
+1. **Define versionbits parameters**  
+   Assign a versionbits bit (`bit = TBD`) and choose deployment start/timeout.
+
+2. **Signalling period begins**  
+   Miners start including the signalling bit in block headers to indicate readiness.
+
+3. **Lock-in**  
+   If signalling reaches the defined threshold (e.g. 90% within 2016 blocks), the deployment locks in.
+
+4. **Activation**  
+   After one additional difficulty period, segOP validation rules become active.
+
+5. **Mandatory activation (optional)**  
+   If the timeout is reached without achieving the threshold, implementations MAY choose a BIP8 mandatory activation mode. This is implementation policy and not consensus-mandated by this specification.
+
+## Notes
+
+- Versionbits allows safe, opt-in miner activation and mirrors prior soft-forks (e.g., BIP141 SegWit).  
+- Test networks, signet deployments, or research networks MAY use alternative parameters or immediate activation.  
+- This specification does **not** mandate a specific activation path for mainnet; it only outlines a recommended approach.
 
 ---
 
