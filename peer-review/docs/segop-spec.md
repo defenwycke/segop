@@ -98,7 +98,7 @@ Extended transactions appear on the wire as follows:
 
     if (flag & 0x02) // segOP
       [ segop_marker  = 0x53 ('S') ]
-      [ segop_flag    = 0x01 ]        # segOP v1
+      [ segop_version    = 0x01 ]        # segOP v1
       [ segop_len     (varint) ]
       [ segop_payload (segop_len bytes) ]
 
@@ -106,6 +106,100 @@ Extended transactions appear on the wire as follows:
 ```
 
 SegWit and segOP can appear independently or together.
+
+### 3.1 Extended Transaction Serialization
+
+segOP reuses the SegWit “marker + flag” mechanism defined in BIP144. No new top-level fields are introduced; instead, the vin count of 0x00 followed by a non-zero flag byte signals the presence of optional extensions.
+
+There are therefore two encodings:
+
+Legacy / non-extended:
+
+```
+nVersion
+vin_count (≠ 0x00)
+vin[0..]
+vout[0..]
+nLockTime
+```
+
+Extended (SegWit, segOP, or both):
+
+```
+nVersion
+marker = 0x00        ; encoded as vin_count = 0x00
+flag   ≠ 0x00        ; bitfield, see below
+vin[0..]
+vout[0..]
+[witnesses...]       ; present if (flag & 0x01) != 0
+[segOP lane...]      ; present if (flag & 0x02) != 0
+nLockTime
+```
+
+### 3.2 Marker and Flag
+
+The extended transaction format reuses the SegWit marker/flag mechanism:
+
+- `marker` is always the single byte `0x00`, in the position where a legacy `vin_count` would appear.
+- `flag` is the following 1-byte **global extension bitfield**.
+
+In segOP v1 the global `flag` byte uses:
+
+- bit 0 (`0x01`): SegWit present  
+- bit 1 (`0x02`): segOP present  
+- bits 2–7 (`0x04`–`0x80`): reserved for future extensions
+
+The full normative definition and examples for `marker` and `flag` are given in §4.
+
+### 3.3 segOP lane placement
+
+When the **segOP bit in the global flag** is set (`flag & 0x02 != 0`), the segOP lane is encoded after all inputs and outputs, and after any SegWit witness data:
+
+```
+nVersion
+marker = 0x00
+flag
+vin[0..]
+vout[0..]
+[witnesses...] ; if (flag & 0x01) != 0
+segop_marker = 0x53 ; ASCII 'S'
+segop_version = 0x01 ; segOP v1
+segop_len (CompactSize) ; total payload bytes
+segop_payload [0..len-1] ; TLV-encoded payload
+nLockTime
+```
+
+Any value of `segop_marker` other than `0x53` MUST be rejected as invalid.
+
+`segop_version` is a **version byte**, not a bitfield. For segOP v1 it MUST be `0x01`. Future versions MAY use different values, but all segOP sections MUST still follow this placement: after any SegWit witness data and before `nLockTime`.
+
+
+
+### 3.4 segOP and Transaction Weight
+
+For the purposes of transaction weight, segOP behaves like non-witness data:
+
+- segOP bytes are counted in the stripped size of the transaction.
+- segOP bytes are not counted as witness and receive no discount.
+- segOP does not change how txid or wtxid are defined:
+    - txid is computed over the legacy non-witness serialization that excludes marker, flag, witness, and segOP (see §7.2.1).
+    - wtxid is computed as in BIP141 and also ignores segOP bytes (see §7.2.2).
+
+For weight, implementations MUST:
+
+```
+stripped_size = size of the transaction when encoded without any witness data, but including segOP marker/version/length/payload if present.
+
+witness_size  = size of all SegWit witness data (if any)
+
+weight = (stripped_size * 4) + witness_size
+```
+
+Put simply:
+
+- segOP bytes are part of the stripped/base transaction for weight.
+- segOP bytes are charged at the full 4 WU / byte rate.
+- segOP bytes do not appear in the txid or wtxid serializations.
 
 ## 4. Marker and Flag Definition
 
@@ -157,20 +251,22 @@ A segOP section is appended:
 
 ```
 [ segop_marker = 0x53 ]
-[ segop_flag   = 0x01 ]
+[ segop_version   = 0x01 ]
 [ segop_len    <varint> ]
 [ segop_payload ]
 ```
 
 A segOP section is defined as the contiguous sequence:
 
-[ segop_marker ][ segop_flag ][ segop_len ][ segop_payload ]
+```
+[ segop_marker ][ segop_version ][ segop_len ][ segop_payload ]
+```
 
 A transaction with segOP present MUST contain exactly one such segOP section.
 
 Consensus:
 
-- `segop_flag` MUST be `0x01` for v1.
+- `segop_version` MUST be `0x01` for v1.
 - `segop_len` MUST NOT exceed `MAX_SEGOP_TX_BYTES`.
 - Payload length MUST match encoding exactly.
 - The transaction MUST contain exactly one `P2SOP output`.
@@ -254,7 +350,7 @@ segOP together. Hex values are examples only.
 
   # segOP section
   53                                      # segop_marker 'S'
-  01                                      # segop_flag v1
+  01                                      # segop_version v1
   
   18                                      # segop_len = 24 bytes (varint 0x18)
 
@@ -562,7 +658,7 @@ Corresponding segOP section (example):
 
 ```
 53 # segop_marker = 0x53 ('S')
-01 # segop_flag = 0x01 (segOP v1)
+01 # segop_version = 0x01 (segOP v1)
 18 # segop_len = 24 bytes
 
 01 10 # type = 1, len = 16
@@ -852,7 +948,7 @@ segOP follows the same relay model as SegWit: full blocks contain all data, whil
 Full blocks sent over P2P via the `block` message MUST include the full segOP section, including:
 
 - `segop_marker`
-- `segop_flag`
+- `segop_version`
 - `segop_len`
 - `segop_payload` (the actual bytes)
 
@@ -1061,7 +1157,7 @@ Because every segOP payload is deterministically committed via a single P2SOP ou
 | MAX_SEGOP_TX_BYTES    | 64,000    | Consensus | Per-tx segOP payload limit |
 | MAX_SEGOP_BLOCK_BYTES | 400,000   | Policy    | Recommended per-block segOP usage |
 | TAG_SEGOP_COMMIT      | "segop:commitment" | String | Domain tag for P2SOP |
-| SEGOP_VERSION         | 1         | Integer   | `segop_flag` value |
+| SEGOP_VERSION         | 1         | Integer   | `segop_version` value |
 
 ---
 
