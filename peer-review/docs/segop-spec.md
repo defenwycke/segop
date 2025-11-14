@@ -1183,10 +1183,21 @@ Because every segOP payload is deterministically committed via a single P2SOP ou
 
 # Appendix B — Future Extensions (Reserved Flags)
 
-| Bit | Hex  | Name         | Description |
-|-----|------|--------------|-------------|
-| 2   | 0x04 | segOP-Wit / Qsig (reserved) | Placeholder for future segregated sub-lanes |
-| 3–7 | 0x08–0x80 | Reserved | Future soft-fork extensions |
+The global transaction `flag` byte (see §3.2 and §4) reserves several bits for future soft-fork upgrades that may extend the segOP or SegWit data model.
+
+These reserved bits MUST be set to zero in segOP v1 and MUST cause transaction rejection if non-zero, unless a future consensus change explicitly defines their meaning.
+
+| Bit | Hex   | Name                     | Description |
+|-----|--------|---------------------------|-------------|
+| 2   | 0x04  | segOP-Wit / Qsig (reserved) | Placeholder for potential future segregated sub-lanes, such as: <br>• a prunable witness-like lane (“segOP-Wit”), <br>• Qsig quantum signatures, <br>• versioned auxiliary lanes. |
+| 3–7 | 0x08–0x80 | Reserved                | Reserved for future extensions to the extended-transaction format. MUST be zero in segOP v1. |
+
+## Notes
+
+- These bits allow forward extensibility without expanding the transaction wire format.
+- Future proposals MAY define semantics for these bits via additional soft-fork specifications.
+- Nodes implementing segOP v1 MUST reject any transaction where reserved bits are set.
+
 
 ---
 
