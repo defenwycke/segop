@@ -1958,5 +1958,264 @@ Unchanged by segOP.
 
 ---
 
+# Appendix G — Worked Validation Example
+
+This appendix walks through validation of a concrete segOP-bearing transaction. All hex values are illustrative but internally consistent.
+
+---
+
+## G.1 Example Transaction Overview
+
+The example transaction:
+
+```
+- Version: 1
+- Inputs: 1 SegWit input (P2WPKH), empty scriptSig
+- Outputs:
+  - vout0: P2SOP commitment (OP_RETURN)
+  - vout1: P2WPKH payment output
+- SegWit: present (`flag` bit 0 = 1)
+- segOP: present (`flag` bit 1 = 1)
+- segOP payload:
+  - TLV #1: metadata text `"segOP TLV test!!"`
+  - TLV #2: 4-byte integer
+```
+
+---
+
+## G.2 Raw segOP Payload
+
+The segOP TLV stream is:
+
+```
+- TLV #1  
+  - `type = 0x01`  
+  - `len  = 0x10` (16)  
+  - `value = "segOP TLV test!!"` (ASCII)
+
+- TLV #2  
+  - `type = 0x02`  
+  - `len  = 0x04` (4)  
+  - `value = 0x00000001`
+```
+
+Concatenated payload (`segop_payload`):
+
+```
+01 10 73 65 67 4f 50 20 54 4c 56 20 74 65 73 74 21 21 02 04 00 00 00 01
+```
+
+Hex (no spaces):
+
+```
+01107365674f5020544c5620746573742121020400000001
+```
+
+Payload length:
+
+- 24 bytes → `segop_len = 0x18`.
+
+---
+
+## G.3 P2SOP Commitment
+
+Using the tagged-hash convention (§7.1):
+
+```
+TAG = SHA256("segop:commitment")
+segop_commitment = SHA256(TAG || TAG || segop_payload)
+```
+
+For the payload above, this yields:
+
+```
+segop_commitment =
+61 7e 2b 1a 86 0b 79 e7 38 d8 95 26 70 1e 03 d1
+56 1a b2 a3 fd d8 d5 8b f2 ef 03 9f 5d 9f 59 72
+```
+
+Hex:
+
+```
+617e2b1a860b79e738d89526701e03d1561ab2a3fdd8d58bf2ef039f5d9f5972
+```
+
+This value appears in the P2SOP output script.
+
+---
+
+## G.4 Full Transaction Hex (Extended Serialization)
+
+The full extended transaction (including SegWit and segOP) is:
+
+```
+01000000 # nVersion = 1
+
+0003 # marker=0x00, flag=0x03 (SegWit + segOP)
+
+01 # vin_count = 1
+0000000000000000000000000000000000000000000000000000000000000001 # prevout_hash
+00000000 # prevout_index
+00 # scriptSig length
+ffffffff # nSequence
+
+02 # vout_count = 2
+
+vout0 — P2SOP commitment (value = 0)
+0000000000000000 # value (0)
+27 # scriptPubKey length = 39
+6a # OP_RETURN
+25 # PUSHDATA(37)
+50 32 53 4f 50 # "P2SOP"
+617e2b1a860b79e738d89526701e03d1561ab2a3fdd8d58bf2ef039f5d9f5972 # segop_commitment
+
+vout1 — P2WPKH (1,000,000 sats)
+40420f0000000000 # value = 1,000,000
+16 # scriptPubKey length = 22
+00 # OP_0
+14 # PUSH(20)
+11 11 11 11 11 11 11 11 11 11
+11 11 11 11 11 11 11 11 11 11 # 20-byte keyhash (dummy)
+
+SegWit witness for the single input
+02 # number of stack items
+47 # push 71-byte signature
+01 01 01 01 01 01 01 01 01 01
+01 01 01 01 01 01 01 01 01 01
+01 01 01 01 01 01 01 01 01 01
+01 01 01 01 01 01 01 01 01 01
+01 01 01 01 01 01 01 01 01 01
+01 01 01 01 01 01 01 01 01 01
+01 # (dummy bytes)
+21 # push 33-byte pubkey
+02 02 02 02 02 02 02 02 02 02
+02 02 02 02 02 02 02 02 02 02
+02 02 02 02 02 02 02 02 02 02
+02 02 02 # (dummy bytes)
+
+segOP section
+53 # segop_marker = 'S'
+01 # segop_version = 0x01
+18 # segop_len = 24
+01 10 73 65 67 4f 50 20 54 4c 56 20 74 65 73 74 21 21
+02 04 00 00 00 01 # segop_payload
+
+00000000 # nLockTime
+```
+
+Concatenated (no comments, no spaces), this is a 266-byte transaction.
+
+---
+
+## G.5 Computing txid, wtxid, and fullxid
+
+### G.5.1 txid (legacy ID)
+
+For `txid`, we serialize the transaction **without**:
+
+- marker/flag
+- witness data
+- segOP section
+
+Serialization for `txid`:
+
+```
+nVersion ||
+vin_count || vin ||
+vout_count || vout0 || vout1 ||
+nLockTime
+```
+
+Double-SHA256, displayed in big-endian:
+
+```
+txid = 15aa692629eb04c97e55c313c569cfaac1e09c9ffaa8359f3ffc251c43458d89
+```
+
+segOP and SegWit do not change `txid`.
+
+---
+
+### G.5.2 wtxid (SegWit ID)
+
+For `wtxid`, we follow BIP141:
+
+- include marker/flag
+- include witness data
+- **exclude** segOP section
+
+Serialization for `wtxid`:
+
+```
+nVersion ||
+marker || flag ||
+vin_count || vin ||
+vout_count || vout0 || vout1 ||
+witness ||
+nLockTime
+```
+
+Double-SHA256, big-endian:
+
+```
+wtxid = 44f812cd07af6fc4d6dfd6dc4b0596fda6c927f24df3212ae63c6680714c822f
+```
+
+segOP does not affect the `wtxid`.
+
+---
+
+### G.5.3 fullxid (optional segOP extended ID)
+
+For `fullxid`, we commit to the **entire extended transaction**, including segOP:
+
+```
+extended_serialization =
+nVersion ||
+marker || flag ||
+vin_count || vin ||
+vout_count || vout0 || vout1 ||
+witness ||
+segOP section ||
+nLockTime
+```
+
+Using the tagged-hash convention with tag `"segop:fullxid"`:
+
+```
+fullxid = TAGGED_HASH("segop:fullxid", extended_serialization)
+```
+
+For this example:
+
+```
+fullxid = 02c79f8156074514a9154b40400a9359e513fc8b6649342ef88612391d718f69
+```
+
+`fullxid` is optional and non-consensus; it is shown here for completeness.
+
+---
+
+## G.6 segOP Validation Checklist for the Example
+
+A segOP-aware node validating this transaction in a block performs:
+
+1. Parse extended format (`marker=0x00`, `flag=0x03`).
+2. Confirm segOP present (`flag & 0x02 != 0`).
+3. Confirm exactly one segOP section and one P2SOP output.
+4. Read `segop_marker = 0x53`, reject if not.
+5. Check `segop_version = 0x01`.
+6. Read `segop_len = 0x18` (24), ensure payload size is exactly 24 bytes.
+7. Parse TLV stream:
+   - TLV #1: type=0x01, len=0x10, 16 bytes present.
+   - TLV #2: type=0x02, len=0x04, 4 bytes present.
+   - No trailing bytes; stream length = 24.
+8. Recompute `segop_commitment` from `segop_payload` using TAGGED_HASH.
+9. Extract the 32-byte value from the P2SOP script.
+10. Compare: if `expected_commitment != script_commitment`, reject.
+11. If all checks pass, segOP validation succeeds; the transaction can be included
+    in a block and relayed under segOP rules.
+
+---
 End of segOP-Extended Transaction Specification
 
