@@ -1240,15 +1240,721 @@ These parameters are **not consensus requirements** but suggested values for a v
 
 ---
 
-# Appendix D - Diagrams (Informative)
+# Appendix D — Diagrams (Informative)
 
-TBD
+This appendix provides non-normative diagrams illustrating the structure and data flow of segOP v1. These diagrams are intended to help reviewers and implementers understand the placement, lifecycle, and validation of segOP data.
+
+## D.1 Extended Transaction Layout
+
+The segOP lane extends the BIP141 wire format by adding a post-witness section.
+
+```
++---------------------------------------------------------------+
+| nVersion (4) |
++---------------------------------------------------------------+
+| marker (0x00) | flag (bitfield) |
++---------------------------------------------------------------+
+| vin_count (varint) |
+| + repeated inputs |
++---------------------------------------------------------------+
+| vout_count (varint) |
+| + repeated outputs (incl. P2SOP) |
++---------------------------------------------------------------+
+| Witness data (if flag bit 0 == 1) |
++---------------------------------------------------------------+
+| segOP section (if flag bit 1 == 1) |
+| + segop_marker (0x53) |
+| + segop_version (0x01) |
+| + segop_len (varint) |
+| + segop_payload (TLV-encoded) |
++---------------------------------------------------------------+
+| nLockTime (4) |
++---------------------------------------------------------------+
+```
+
+## D.2 segOP Section Internals
+
+segOP section:
+
+```
++-----------------------+
+| segop_marker = 0x53 |
++-----------------------+
+| segop_version = 0x01 |
++-----------------------+
+| segop_len (varint) |
++-----------------------+
+| segop_payload bytes |
+| + TLV #1 |
+| + TLV #2 |
+| + ... |
++-----------------------+
+```
+
+Example TLV stream (visual):
+
+segop_payload:
+
+```
++------+------+-----------------------+
+|type| len | value... |
++------+------+-----------------------+
+| 01 | 10 | 16 bytes |
++------+------+-----------------------+
+| 02 | 04 | 4 bytes |
++------+------+-----------------------+
+```
+
+## D.3 P2SOP Commitment Flow
+
+This diagram shows how the segOP payload is bound into the block header.
+
+```
+                 segOP payload
+                       |
+                       v
+ +-------------------------------------------+
+ | segop_commitment =                        |
+ |   TAGGED_HASH("segop:commitment", payload)|
+ +-------------------------------------------+
+                       |
+                       v
+    +-----------------------------------+
+    |  P2SOP output (OP_RETURN script)  |
+    |  OP_RETURN | "P2SOP" | commitment |
+    +-----------------------------------+
+                       |
+                       v
+                  Transaction
+                       |
+                       v
+              Merkle root (tx hashes)
+                       |
+                       v
+                  Block header
+```
+
+**Key point:**  
+Any alteration to the segOP payload changes the commitment → tx hash → Merkle root → block hash.
+
+## D.4 Retention Windows (Validation, Operator, Archive)
+
+```
+[tip]-------------------------------------------------------------------[end]                                                                      
+v                                                                         v
+
++----------------------+----------------------+-----------------------------+
+|  Validation Window   |   Operator Window    |       Archive Window        |
+|     mandatory W=24   | optional R≥0 blocks  |   full history (optional)   |
++----------------------+----------------------+-----------------------------+
+|  MUST keep payload   |    MAY keep payload  |   MAY prune nothing         |
+|  (no pruning allowed)|   (node policy only) |   (serve historical data)   |
++----------------------+----------------------+-----------------------------+
+
+Legend:
+- **Validation Window (W = 24 blocks)**  
+  segOP payload *must* be stored. No pruning allowed.
+
+- **Operator Window (R blocks, optional)**  
+  Payload *may* be retained longer according to `-sopwindow=R`.
+
+- **Archive Window (infinite, optional)**  
+  Node keeps *all* segOP payload forever and advertises `NODE_SOP_ARCHIVE`.
+
+- **Prunable Zone (above the table)**  
+  Any block older than `tip − E` where `E = max(W, R)`  
+  → segOP payload **MAY** be removed, but P2SOP commitments remain forever.
+```
+
+## D.5 P2P segOP Payload Retrieval Flow
+
+```
+        Node A (pruned)                     Node B (archive)
+        ----------------                     -----------------
+                 |                                     |
+Needs segOP data |                                     |
+  for tx = X     |                                     |
+                 |---- getsegopdata(txid=X) ---------> |
+                 |                                     |
+                 | <--- segopdata{payload,...} --------|
+                 |                                     |
+                 | validate TLV + commitment           |
+                 v                                     |
+          segOP payload reconstructed                  |
+```
+
+This flow occurs during:
+- IBD (when requesting older pruned segOP payloads)
+- block relay (if cmpctblock omitted segOP data)
+- fullxid computation on pruned nodes
+- explorer / audit reconstruction
+
+## D.6 Compact Block (cmpctblock) Omission Diagram
+
+```
+Full block:
+[header]
+[transactions including full segOP data]
+
+Compact block:
+[header]
+[short txids]
+(NO segOP payload)
+
++-- Node must request missing segOP payload via getsegopdata
+```
+
+## D.7 Summary Diagram — segOP in the Transaction Pipeline
+
+```
+Tx Construction   →   Mempool   →   Mining   →   Block Propagation   →   Validation   →   Retention/Pruning
+      |                  |               |                |                  |                    |
+      v                  v               v                v                  v                    v
+
+ Build TLV         Validate TLV     Add segOP +      cmpctblock omits    Validate segOP      Keep last 24 blocks
+ payload           + policy rules   P2SOP commit     segOP payload       TLVs + commitment   (mandatory window)
+                                                                         before relay
+                                                                          
+                     ─────────────── Data Flow Summary ───────────────
+
+ Full blocks include full segOP payload
+ Compact blocks omit it (must fetch via getsegopdata)
+ Blocks older than retention window prune segOP payload
+ P2SOP commitment remains forever (consensus-critical)
+```
+---
+
+# Appendix E — segOP Transaction Lifecycle (Informative)
+
+This appendix provides an end-to-end, non-normative walkthrough of a segOP-bearing transaction. It is intended to assist implementers and reviewers in understanding how segOP behaves across creation, relay, validation, and pruning, and how it integrates with the P2P network.
+
+## E.1 Creation
+
+1. **Application prepares payload**
+
+    - Wallet or application constructs a TLV-structured `segop_payload`.
+    - TLV records MUST be well-formed: `[type][len][value]` concatenated.
+
+2. **Compute segOP commitment**
+
+    ```
+    segop_commitment = TAGGED_HASH("segop:commitment", segop_payload)
+    ```
+
+3. **Insert P2SOP output**
+
+    - A single OP_RETURN output is added containing `"P2SOP"` and the  32-byte `segop_commitment`.
+
+4. **Insert segOP section**
+
+    ```
+    segop_marker = 0x53
+    segop_version = 0x01
+    segop_len = varint(len(payload))
+    segop_payload = TLV stream
+    ```
+
+5. **Set global flag bits**
+
+    - SegWit? set bit 0
+    - segOP? set bit 1
+
+6. **Compute txid and wtxid**
+
+    - `txid` excludes segOP and witness data.
+    - `wtxid` excludes segOP but includes witness.
+
+7. **Compute fullxid (optional)**
+
+    ```
+    fullxid = TAGGED_HASH("segop:fullxid", extended_serialization)
+    ```
+
+8. Transaction is now ready for mempool acceptance.
 
 ---
 
-# Appendix E - segOP Transaction Lifecycle (Informative)
+## E.2 Mempool Acceptance at a Validating Node
 
-TBD
+When a node receives the transaction:
+
+1. **Detect extended format**
+
+    - `marker == 0x00`, `flag != 0x00`.
+
+2. **Check structural correctness**
+
+    - Exactly one segOP section.
+    - Exactly one P2SOP output.
+    - `segop_len ≤ MAX_SEGOP_TX_BYTES`.
+
+3. **Validate TLV stream**
+
+    - Lengths match.
+    - No malformed TLVs.
+    - Stream size exactly equals `segop_len`.
+
+4. **Recompute segop_commitment**
+
+    - Check that commitment equals the 32-byte value in the P2SOP output.
+
+5. **Apply standard mempool policy**
+
+    - Weight, minfeerate, RBF, script validity (independent of segOP).
+
+6. **Store full segOP payload in mempool**
+
+    - Mempools do not prune.
+
+Transaction is now relayed using `inv(MSG_TX_SOP)` announcements.
+
+---
+
+## E.3 Block Template Construction (Miner Side)
+
+Miners:
+
+1. Select transactions by feerate and policy.
+2. Include **both**:
+    - the P2SOP output,
+    - the full segOP section.
+3. Compute:
+    - txid  
+    - hashMerkleRoot  
+    - block header  
+4. Mine normally.
+
+No special mining logic is required beyond full segOP inclusion.
+
+---
+
+## E.4 Block Relay (Full Blocks)
+
+A block announced via `block`:
+
+    - **MUST include full segOP payload bytes.**
+    - Nodes receiving the block have everything required to validate segOP locally.
+
+Workflow on reception:
+
+1. Receive block message  
+2. Validate header + PoW  
+3. Parse transactions  
+4. For each segOP tx:  
+    - Check segop_version  
+    - Check segop_len  
+    - Validate TLV  
+    - Recompute `segop_commitment`  
+    - Verify P2SOP commitment  
+
+If all checks succeed, the block is provisionally valid and eligible for relay.
+
+---
+
+## E.5 Block Relay (Compact Blocks)
+
+Compact block relay mechanisms (e.g. `cmpctblock`):
+
+- **Omit segOP payload bytes**  
+- Include enough metadata (scriptPubKey for P2SOP or short ID reconstruction) for receiver to identify which transactions contain segOP.
+
+Receiver workflow:
+
+```
+cmpctblock received
+|
+v
+Reconstruct transactions (txids/shortids)
+|
+v
+Identify segOP-bearing txs
+|
+v
+Send getsegopdata for missing payloads
+|
+v
+Receive segopdata (payload bytes)
+|
+v
+Validate TLV + P2SOP commitment
+|
+v
+Accept block; relay
+```
+
+---
+
+## E.6 Validation and Activation
+
+A node MUST:
+
+1. Validate all segOP payloads in full.
+2. Validate P2SOP commitments.
+3. Mark block as valid only after segOP validation completes.
+4. Relay block to peers once fully validated.
+
+Nodes MUST NOT relay segOP-bearing blocks before completing segOP validation.
+
+---
+
+## E.7 Retention Window
+
+After a block is accepted:
+
+1. segOP payloads MUST be stored for at least the **Validation Window**:
+
+    ```
+    W = 24 blocks
+    ```
+
+2. Node operators MAY extend storage using:
+
+    ```
+    -sopwindow=R
+    ```
+
+3. Effective Window:
+
+    ```
+    E = max(W, R)
+    ```
+
+    Blocks older than `tip - E` MAY have their segOP payload pruned.
+
+    Pruning removes:
+
+    - `segop_payload` bytes
+
+    Pruning retains:
+
+    - transaction header
+    - segOP marker/version/len (if stored inline)
+    - P2SOP output
+    - Merkle root
+    - block hash  
+    - all consensus-critical data
+
+---
+
+## E.8 Pruned State
+
+If a node has pruned segOP payload for a historical block:
+
+- The segOP section is replaced by a placeholder or omitted from storage.
+- The P2SOP output still commits to the correct hashed payload.
+- Block hashes, Merkle roots, and chain consensus remain intact.
+
+Pruned nodes CANNOT recompute `fullxid` without refetching payload bytes.
+
+---
+
+## E.9 Historical Retrieval (Archive Interaction)
+
+When a pruned node needs segOP payload for a pruned block:
+
+1. Identify missed payloads for txids
+
+2. Find peers advertising:
+
+    - `NODE_SOP_RECENT` (recent blocks)
+    - `NODE_SOP_ARCHIVE` (full history)
+3. Send:
+
+    `getsegopdata { txids: [...] }`
+
+5. Receive:
+
+    `segopdata { txid, sopver, soplen, soppayload }`
+
+7. Recompute:
+
+   `expected_commitment = TAGGED_HASH("segop:commitment", soppayload)`
+
+6. Validate against embedded P2SOP commitment  
+
+7. Use payload as needed (explorer, L2, fullxid)
+
+---
+
+## E.10 Interaction with Higher Layers (Optional)
+
+Higher-layer protocols may:
+
+- embed commitments or metadata in TLVs  
+- use segOP as a “data anchoring lane”  
+- derive protocol-level IDs from `fullxid`  
+- rely on archive nodes for historical payloads  
+
+Such protocols MUST NOT alter Bitcoin consensus rules.
+
+---
+
+## E.11 Summary
+
+The segOP lifecycle is:
+
+```
+Construct → Mempool → Mining → Relay → Full Validation → Retention (W/R/E) → Pruning → Historical Retrieval (optional)
+```
+
+At each step, segOP maintains:
+
+- Full fee fairness  
+- Strong commitment binding  
+- Optional prunability  
+- Optional extended identifiers  
+- Clean separation between consensus and policy  
+
+---
+
+# Appendix F — Glossary (Informative)
+
+This glossary defines key terms used throughout the segOP specification. It is non-normative and provided for clarity.
+
+---
+
+## Active Chain
+
+The best valid chain recognized by the node. All segOP validation, pruning decisions, and retention windows apply only to blocks on the active chain.
+
+---
+
+## Archive Window Node
+
+A node that stores **all** segOP payload bytes for the entire chain history. Such nodes advertise `NODE_SOP_ARCHIVE` and serve historical segOP data to peers.
+
+---
+
+## Commitment (P2SOP Commitment)
+
+A 32-byte tagged hash embedded in a P2SOP output:
+
+```
+segop_commitment = TAGGED_HASH("segop:commitment", segop_payload)
+```
+
+This binds the segOP payload to the transaction for consensus.
+
+---
+
+## Effective Retention Window (E)
+
+The number of blocks for which a node **retains segOP payload bytes**.
+
+Defined as:
+
+```
+E = max(W, R)
+```
+
+where `W` is the mandatory Validation Window and `R` is the optional
+Operator Window.
+
+---
+
+## Extended Transaction
+
+A transaction using the SegWit-style marker and flag (`00 <flag>`) format. Extended transactions include SegWit, segOP, or both.
+
+---
+
+## Extended Serialization
+
+The full wire-format transaction including:
+
+- nVersion  
+- marker, flag  
+- vin  
+- vout  
+- witness (if any)  
+- segOP section (if any)  
+- nLockTime  
+
+Used for `fullxid`.
+
+---
+
+## fullxid
+
+An **optional** extended identifier that commits to the entire segOP-extended transaction. Computed as:
+
+```
+fullxid = TAGGED_HASH("segop:fullxid", extended_serialization)
+```
+
+Not required for consensus. Useful for indexing, tooling, or L2 anchoring.
+
+---
+
+## Legacy Node
+
+A node unaware of segOP. It:
+
+- ignores segOP bytes  
+- computes `txid` and `wtxid` exactly as before  
+- sees segOP-bearing transactions as valid
+
+Legacy nodes remain fully compatible with segOP.
+
+---
+
+## node retention horizon
+
+The earliest block height for which a node retains segOP payload bytes.
+
+All heights `< horizon` may have pruned payloads.
+
+---
+
+## Operator Window (R)
+
+Optional user-configurable retention period:
+
+```
+-sopwindow=R # R ≥ 0 blocks
+```
+
+Extends storage beyond the mandatory Validation Window.
+
+---
+
+## P2SOP (Pay-to-SegOP)
+
+A special OP_RETURN script that commits to a segOP payload:
+
+```
+6a25 5032534f50 <32-byte-commitment>
+```
+
+Every segOP transaction MUST contain exactly one P2SOP output.
+
+---
+
+## segOP (Segregated OP_RETURN)
+
+A post-witness data section containing:
+
+- `segop_marker   = 0x53`
+- `segop_version  = 0x01`
+- `segop_len      = varint`
+- `segop_payload` = TLV-encoded data
+
+---
+
+## segOP-aware Node
+
+A node implementing this specification. It:
+
+- validates segOP payloads,
+- enforces P2SOP commitment rules,
+- advertises segOP data serving capabilities via P2P service flags,
+- MAY prune payload bytes after the retention window.
+
+---
+
+## segOP Marker (`segop_marker`)
+
+A 1-byte marker:
+
+```
+0x53 ('S')
+```
+
+Identifies the presence of a segOP section. Any other value MUST be rejected.
+
+---
+
+## segOP Payload (`segop_payload`)
+
+The byte sequence committed by the P2SOP output. Defined as a series of TLV records. Payloads are prunable outside the retention window.
+
+---
+
+## segOP Section
+
+The encoded sequence:
+
+```
+segop_marker || segop_version || segop_len || segop_payload
+```
+
+Appears after witness data and before `nLockTime`.
+
+Exactly one segment is allowed per segOP transaction.
+
+---
+
+## segOP Version (`segop_version`)
+
+The protocol version of the segOP section. For v1:
+
+```
+segop_version = 0x01
+```
+
+Future versions may extend this field.
+
+---
+
+## TLV (Type–Length–Value)
+
+The encoding format of segOP payloads:
+
+```
+[type][len][value]
+```
+
+Enforced by consensus. All TLVs MUST be well-formed.
+
+---
+
+## Validation Window (W)
+
+Mandatory minimum number of blocks for which segOP payload bytes MUST be retained:
+
+```
+W = 24 blocks
+```
+
+Allows reorg safety, reliable relay, and validation.
+
+---
+
+## Validation Window Node
+
+A node retaining segOP payload bytes only for the mandatory 24-block Validation Window.
+
+---
+
+## Witness (SegWit)
+
+SegWit data remains unchanged by segOP. Witness bytes:
+
+- are discounted in weight,
+- are part of the wtxid,
+- appear before segOP.
+
+segOP does not modify SegWit consensus.
+
+---
+
+## wtxid
+
+The SegWit witness-inclusive transaction ID, unchanged from BIP141.
+
+Does **not** commit to segOP bytes.
+
+---
+
+## txid
+
+The legacy transaction ID. Computed without:
+
+- marker, flag
+- witness data
+- segOP section
+
+Unchanged by segOP.
 
 ---
 
