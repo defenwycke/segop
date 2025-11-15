@@ -259,3 +259,35 @@ shows valid segOP structure:
 - Developed new method of pruning and p2p payload verification that doesnt break relays.
 - I will continue with the initial code updates to the spec. Build a new spec for pruning and integrate.
 - It is a better method of pruning - so i am grateful for Moonsettlers questions.
+
+### 13-11-2025
+- Continued analysis of segOP pruning model following Moonsettler’s feedback.
+- Verified that current segOP design still requires nodes to temporarily fetch payloads before validation, confirming pruning cannot occur before validation.
+- Re-evaluated segOP relay behaviour to ensure nodes do not prune payloads prematurely; confirmed that the existing 24-block validation window in the spec works conceptually but needs clearer documentation.
+- Double-checked OP_RETURN behaviour in Bitcoin Core: confirmed that OP_RETURN outputs cannot be pruned by nodes — their bytes remain permanently embedded in the scriptPubKey.
+- Updated internal notes contrasting OP_RETURN (non-prunable) vs segOP (prunable after validation with retained commitment).
+- Drafted improved explanation for mailing list reply:
+  - legacy nodes validate and relay blocks without seeing segOP payloads
+  - segOP nodes validate payload → relay → optionally prune post-validation
+  - segOP payload commitment remains sufficient for future consensus checks
+  - Reviewed segOP consensus flow again to ensure no contradictions with Bitcoin P2P rules.
+- Confirmed regtest behaviour unchanged during pruning-model review; node stability remains intact.
+- Documented pruning-model insights for integration into revised spec and BIP draft.
+
+### 14-11-2025
+- Reviewed segOP transaction pipeline diagram and identified formatting/clarity issues.
+- Began drafting Appendix G (Worked Validation Example) and Appendix H (Rationale / Design Motivations).
+- Wrote the initial full rationale for why segOP exists, including:
+  - Bitcoin’s ongoing spam/ARB-data pressure
+  -  Need for a structured, full-fee data lane
+  - Prunability benefits over OP_RETURN
+  - Preservation of node autonomy
+  - Why arbitrary data is required for Bitcoin to act as a settlement and timestamping layer
+- Drafted consolidated section: “What segOP could do for Bitcoin in its spam war”.
+- Added early notes on how segOP enables future structured use cases (Qsig, rollups, commitments, vault metadata).
+- Integrated rationale and spam-war content into the spec’s summary sections (no code changes).
+- Documentation preparation only; no modifications to Core code.
+- Wallet app.tsx redesign. Now includes dual wallet and shared mempool explorer. Enabling user to test from walet to wallet via an easy UI.
+
+### 15-11-2025
+- Started shunting segOP core v30 code to the latest spec.
