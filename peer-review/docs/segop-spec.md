@@ -483,38 +483,52 @@ Consensus:
 - `P2SOP` MUST NOT appear in non-segOP transactions.
 - `segOP` MUST appear only after `SegWit` (if present) and before `nLockTime`.
 
-## 5.2 TLV Payload (Mandatory)
+### 5.2 TLV Type Registry (v1)
 
-The segOP payload (segop_payload) is defined as a concatenation of one or more TLV records:
+segOP payloads are encoded as a sequence of TLV records:
 
-```
-[type (1 byte)] [len (varint)] [value (len bytes)]
-```
+- `type` – 1 byte
+- `length` – CompactSize (Bitcoin varint)
+- `value` – `length` bytes
 
-**TLV rules (consensus)**
+Consensus validation (`SegopIsValidTLV`) is **type-agnostic** and only enforces:
 
-- Each TLV record MUST be well-formed.
-- `type` is a single byte (0–255).
-- `len` is a Bitcoin-style varint, allowing lengths from 0 to `MAX_SEGOP_TX_BYTES`.
-- `value` MUST be exactly `len` bytes.
-- TLVs MUST appear back-to-back with no padding.
-- Unknown TLV types MUST be skipped.
-- The entire concatenated TLV stream MUST be exactly `segop_len` bytes.
+- well-formed CompactSize length
+- no overrun
+- exact end of buffer (no slack)
+- global payload size ≤ `MAX_SEGOP_PAYLOAD_SIZE`
 
-Rationale
+This section defines a **non-exhaustive registry** of recommended TLV types for segOP v1.  
+Nodes and applications MUST treat unknown `type` values as opaque binary bytes.
 
-- A payload may consist of one large TLV (simple use cases).
-- A payload may contain multiple TLVs (structured use cases).
-- TLV structure allows:
-  - Metadata + body separation
-  - Multiple logical components (e.g., headers, proofs, commitments)
-  - Backwards/forwards compatibility
-  - Selective parsing
-  - Explicit Encoding Guarantee
+#### 5.2.1 Core v1 types
 
-To avoid reviewer confusion:
+| Type  | Name        | Encoding            | Intended use                                                                 |
+|-------|-------------|---------------------|------------------------------------------------------------------------------|
+| 0x01  | TEXT_UTF8   | UTF-8 text          | Human-readable labels, comments, app identifiers, small metadata strings.    |
+| 0x02  | JSON_UTF8   | UTF-8 JSON          | Structured metadata as JSON objects/arrays (small configs, headers, etc.).   |
+| 0x03  | BINARY_BLOB | Opaque byte string  | Hashes, Merkle roots, proofs, app-specific binary / CBOR / protobuf, etc.    |
 
-In segOP v1, len is a Bitcoin varint. This allows TLVs to range from 0 bytes up to the full segOP payload limit. Applications may encode their entire payload in a single TLV or split it into multiple TLVs as needed.
+- **Type 0x01 (TEXT_UTF8)**  
+  - `value` MUST be valid UTF-8.  
+  - Wallets and RPCs SHOULD render this as a plain text string.
+
+- **Type 0x02 (JSON_UTF8)**  
+  - `value` SHOULD be UTF-8 JSON (object/array).  
+  - Wallets and RPCs SHOULD attempt to parse it as JSON and may fall back to raw text or hex on parse failure.
+
+- **Type 0x03 (BINARY_BLOB)**  
+  - `value` is an opaque byte string with no imposed structure.  
+  - Higher-layer protocols (rollups, vaults, qsig, etc.) MAY standardise their own conventions for 0x03 values.
+
+#### 5.2.2 Unknown types
+
+- Future BIPs or L2 protocols MAY define additional `type` values.  
+- segOP consensus rules remain **agnostic** to the registry; unknown `type`s are accepted as long as TLV structure and global size are valid.  
+- Wallets and RPCs SHOULD at minimum expose:
+  - `type` as a hex byte (e.g. `"0x7f"`)
+  - `length` as an integer
+  - `value_hex` as hex for the raw bytes.
 
 ## 6. Worked Example (SegWit + segOP, flag = 0x03)
 
