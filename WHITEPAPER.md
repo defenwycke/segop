@@ -1,3 +1,0 @@
-## WHITEPAPER.md
-
-*In progress*
