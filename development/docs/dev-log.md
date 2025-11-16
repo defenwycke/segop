@@ -291,3 +291,22 @@ shows valid segOP structure:
 
 ### 15-11-2025
 - Started shunting segOP core v30 code to the latest spec.
+- Implemented fullxid (extended transaction ID):
+  - Added calculation path for the new fullxid, which includes the segOP data lane in the hash.
+  - Ensured legacy txid and wtxid remain unchanged.
+  - Confirmed code produces all three IDs deterministically.
+  - Verified output via RPC inspection and internal logging.
+
+### 16-11-2025
+
+- Implemented strict TLV structure for segOP payloads.
+- Added mandatory TLV parsing and encoding rules as defined in draft-1.
+- Updated segOP serializer/deserializer to enforce:
+  - `[type][length][value]` ordering
+  - Proper length validation
+  - Rejection of malformed TLVs
+- Verified TLV round-trip stability through:
+  - segopsend
+  - decoderawtransaction
+  - decodesegoptx
+- Confirmed spec matches code behaviour exactly.
