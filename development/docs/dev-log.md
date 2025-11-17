@@ -298,7 +298,6 @@ shows valid segOP structure:
   - Verified output via RPC inspection and internal logging.
 
 ### 16-11-2025
-
 - Implemented strict TLV structure for segOP payloads.
 - Added mandatory TLV parsing and encoding rules as defined in draft-1.
 - Updated segOP serializer/deserializer to enforce:
@@ -310,3 +309,23 @@ shows valid segOP structure:
   - decoderawtransaction
   - decodesegoptx
 - Confirmed spec matches code behaviour exactly.
+
+### 17-11-2025
+- Completed checklist alignment for segOP implementation (draft-1 vs live code).
+- Confirmed that two major requirements from the compliance checklist are already complete in Core:
+  - fullxid (Extended Transaction ID) — COMPLETE
+    - Verified fullxid calculation path matches draft-1.
+    - Confirmed hashing includes segOP lane while legacy txid and wtxid remain unchanged.
+    - RPC and logging confirm deterministic output across repeated transactions.
+  - TLV Structure Enforcement — COMPLETE
+    - Code now enforces strict [type][length][value] ordering.
+    - Malformed TLVs rejected during parsing.
+    - Verified round-trip through segopsend, decoderawtransaction, and decodesegoptx.
+    - Behaviour matches the updated spec exactly.
+- Spec Update: New TLV Data Types — COMPLETE
+  - Updated the segOP Extended Transaction Specification to define additional TLV types.
+  - Added type identifiers and descriptions beyond the default 0x01 text TLV.
+  - Updated examples, field tables, and normative language to reflect multi-TLV sequences.
+  - Clarified how nodes MUST parse unknown types safely (ignore value; retain length discipline).
+  - Spec and code now aligned on TLV extensibility model.
+- Confirmed successful validation across regtest, wallet RPC, and UI.
