@@ -53,7 +53,7 @@ These are *optional extensions*, not requirements — made possible because segO
 
 ## Resources
 
-- 📘 [Draft Specification](.peer-review/docs/segop-spec.md)  
+- 📘 [Draft Specification](./peer-review/docs/segop-spec.md)  
 - 🧪 [Experiment Logs](./development/docs/dev-log.md/)  
 - 💬 Discussion: Bitcoin-Dev mailing list (https://groups.google.com/g/bitcoindev/c/uhnM_EC0AQA)
 
