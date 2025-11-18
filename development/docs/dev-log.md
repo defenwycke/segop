@@ -338,3 +338,17 @@ shows valid segOP structure:
 - Updated wallet/RPC logic to recognise "encoding": "text_multi" with a "texts" array for constructing multiple UTF-8 TLVs in a single segOP payload.
 - Verified end-to-end behaviour on regtest: segOP transactions with multiple TLVs decode correctly via decodesegop, and all TLVs are parsed with correct type, length, value, and text.
 - Confirmed P2SOP commitment generation and validation still works for multi-TLV payloads without modification.
+- Implemented full segOP TLV registry and helpers in segop.h:
+- SegopTlv struct, BuildSegopTlvSequence, BuildSegopTextTlv, BuildSegopTextTlvMulti
+- Reserved types 0x01 (TEXT_UTF8), 0x02 (JSON_UTF8), 0x03 (BINARY_BLOB)
+- Extended segopsend wallet RPC to support:
+  - encoding="text_multi" with "texts" array → multi 0x01 TLVs
+  - encoding="json" with "data" (raw string or object) → single 0x02 JSON TLV
+  - encoding="blob" with "data_hex" → single 0x03 BLOB TLV
+- Updated decodesegop RPC to decode TLV sequences and expose:
+  - type, length, value_hex, and kind = "text" | "json" | "blob" | "unknown"
+  - For JSON (0x02): text (raw JSON) and parsed (UniValue) fields
+- Verified on regtest with live transactions:
+  - text_multi: 3× TEXT TLVs (0x01) decoded correctly
+  - json: {"foo":"bar","n":42} encoded as 0x02 TLV and decoded with kind="json"
+  - blob: deadbeef encoded as 0x03 TLV and decoded with kind="blob"
