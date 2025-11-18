@@ -329,3 +329,12 @@ shows valid segOP structure:
   - Clarified how nodes MUST parse unknown types safely (ignore value; retain length discipline).
   - Spec and code now aligned on TLV extensibility model.
 - Confirmed successful validation across regtest, wallet RPC, and UI.
+
+### 18-11-2025
+
+- Implemented full TLV sequence support in segop.h, including SegopTlv struct and the BuildSegopTlvSequence helper used across all encoding paths.
+- Refactored single-text TLV builder to use the new sequence helper for consistent serialization.
+- Added BuildSegopTextTlvMulti to support multi-TLV payloads (type 0x01 repeated), including RPC plumbing in segopsend.
+- Updated wallet/RPC logic to recognise "encoding": "text_multi" with a "texts" array for constructing multiple UTF-8 TLVs in a single segOP payload.
+- Verified end-to-end behaviour on regtest: segOP transactions with multiple TLVs decode correctly via decodesegop, and all TLVs are parsed with correct type, length, value, and text.
+- Confirmed P2SOP commitment generation and validation still works for multi-TLV payloads without modification.
