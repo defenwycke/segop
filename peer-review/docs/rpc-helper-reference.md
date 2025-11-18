@@ -1,29 +1,28 @@
 # SegOP RPC Helper Reference
-
 **Hyper Hash / segOP Bitcoin Core Fork – Developer RPC Guide**  
 **Last updated:** 18-Nov-2025
 
-This guide documents the custom RPC methods introduced by the segOP-enabled Bitcoin Core fork.  
-It is intended for developers, reviewers, researchers, and Bitcoin Core contributors evaluating segOP.
+This guide documents the custom RPC methods introduced by the segOP-enabled Bitcoin Core fork.
 
 ---
 
 ## Overview
 
-SegOP adds a small set of RPCs that extend node functionality **without modifying any legacy RPCs**.
+SegOP adds a small set of RPCs that extend node functionality **without modifying any existing Bitcoin Core RPC**.
 
-Goals of the segOP RPC layer:
+Goals:
 
-- Provide clean access to segOP payloads (TLV sequences)
-- Allow wallets to construct segOP-enabled transactions
-- Expose P2SOP commitments for debugging, audits, and research
-- Maintain compatibility with all standard Bitcoin Core behaviors
+- Clean TLV decoding  
+- Wallet-friendly segOP transaction construction  
+- P2SOP debugging tools  
+- Full compatibility with Bitcoin Core  
 
-SegOP introduces **three categories of RPCs**:
+Current RPC set:
 
-- **Inspection RPCs** (decoding, TLV parsing)  
-- **Wallet Construction RPCs** (creating segOP transactions)  
-- **Utility RPCs** (commitment helpers, validation helpers)
+- `decodesegop`
+- `segopsend`
+- `getsegopdata`
+- (internal helpers used indirectly)
 
 ---
 
@@ -33,13 +32,13 @@ SegOP introduces **three categories of RPCs**:
 
 Decode segOP payloads and TLV sequences from any raw transaction.
 
-### Example
+### Usage
 
 ```
-btccli decodesegop "$RAW_TX"  
+btccli decodesegop "$RAW_TX"
 ```
 
-### Returns
+### Example Output
 
 ```
 {
@@ -52,17 +51,22 @@ btccli decodesegop "$RAW_TX"
       "type": "0x01",
       "length": 9,
       "value_hex": "666972737420544c56",
-      "text": "first TLV"
+      "text": "first TLV",
+      "kind": "text"
     }
   ]
-}  
+}
 ```
 
-### Notes
+### Decoder Behaviour
 
-- Works for **any** transaction — mempool or confirmed.  
-- Safely handles malformed or truncated segOP payloads.  
-- Returns `"has_segop": false` for non-segOP Bitcoin transactions.
+- Handles malformed segOP payloads safely  
+- Returns `"has_segop": false` for non-segOP transactions  
+- Supports:
+  - TEXT TLVs (0x01)  
+  - JSON TLVs (0x02)  
+  - BLOB TLVs (0x03)  
+  - Unknown TLVs (kind = "unknown")  
 
 ---
 
@@ -70,48 +74,43 @@ btccli decodesegop "$RAW_TX"
 
 ## `segopsend "address" amount "payload" options`
 
-Creates and funds a segOP-enabled transaction.
+Creates and funds a segOP-enabled transaction, optionally with a P2SOP commitment.
 
-This is the **primary helper** for wallet users and regtest/testnet developers.
+### Required Arguments
 
-### Arguments
+| Arg | Type | Description |
+|------|-------|-------------|
+| address | string | Destination Bitcoin address |
+| amount | number | Amount in BTC |
+| payload | string | Depends on encoding mode |
+| options | object | JSON object defining segOP behavior |
 
-| Arg     | Type   | Description                        |
-|---------|--------|------------------------------------|
-| address | string | Destination Bitcoin address        |
-| amount  | number | Amount in BTC                      |
-| payload | string | Depends on encoding mode           |
-| options | object | Additional parameters              |
+### Options Supported
 
-### Options (Full List)
-
-| Field                      | Type           | Description |
-|---------------------------|----------------|-------------|
-| version                   | int            | Payload version (default = 1) |
-| encoding                  | string         | `"text"`, `"hex"`, `"text_multi"` |
-| p2sop                     | bool           | Include P2SOP commitment output |
-| texts                     | array<string>  | Required for `"text_multi"` |
-| hexdata                   | string         | Required for `"hex"` encoding |
-| subtract_fee_from_output  | bool           | Optional |
+| Field | Type | Description |
+|-------|-------------|----------------|
+| version | number | segOP version (default 1) |
+| encoding | string | `"text"`, `"text_multi"`, `"json"`, `"blob"`, `"hex"` |
+| p2sop | bool | Include P2SOP output |
+| texts | array<string> | Required for `"text_multi"` |
+| data | any | Input for JSON TLV |
+| data_hex | string | Input for blob TLV |
+| subtract_fee_from_output | bool | Optional |
 
 ---
 
 ## Encoding Modes
 
-### **1. Single-TLV text**
+### 2.1 `text` (single TLV)
 
 ```
 btccli segopsend "$ADDR" 0.001 "hello world" \
-'{"encoding":"text","version":1,"p2sop":true}'  
+'{"encoding":"text","version":1,"p2sop":true}'
 ```
-
-**Result:**  
-- One TLV (`0x01`)  
-- UTF-8 payload  
 
 ---
 
-### **2. Multiple TLVs (text_multi)**
+### 2.2 `text_multi` (multiple TLVs)
 
 ```
 btccli segopsend "$ADDR" 0.001 "ignored" \
@@ -119,39 +118,66 @@ btccli segopsend "$ADDR" 0.001 "ignored" \
   "encoding":"text_multi",
   "version":1,
   "p2sop":true,
-  "texts":["first TLV", "second TLV", "third TLV"]
-}'  
+  "texts": ["first TLV", "second TLV", "third TLV"]
+}'
 ```
 
-**Result:**  
-- Ordered TLV sequence  
-- CompactSize lengths  
-
-**Example TLV encoding:**
+Produces TLVs:
 
 ```
-01 09 <first TLV bytes>  
-01 0A <second TLV bytes>  
-01 09 <third TLV bytes>  
+01 09 <first bytes>
+01 0A <second bytes>
+01 09 <third bytes>
 ```
 
 ---
 
-### **3. Hex encoding**
+### 2.3 `json` (JSON TLV)
 
 ```
 btccli segopsend "$ADDR" 0.001 "" \
-'{"encoding":"hex","hexdata":"deadbeef","p2sop":true}'  
+'{"encoding":"json","version":1,"p2sop":true,"data":{"foo":"bar","n":42}}'
 ```
 
-### Returns
+Decoded:
 
 ```
 {
-  "txid": "...",
-  "hex": "... raw transaction ...",
-  "complete": true
-}  
+  "type": "0x02",
+  "length": 20,
+  "text": "{\"foo\":\"bar\",\"n\":42}",
+  "parsed": { "foo": "bar", "n": 42 },
+  "kind": "json"
+}
+```
+
+---
+
+### 2.4 `blob` (raw bytes)
+
+```
+btccli segopsend "$ADDR" 0.001 "" \
+'{"encoding":"blob","version":1,"p2sop":true,"data_hex":"deadbeef"}'
+```
+
+Decoded:
+
+```
+{
+  "type": "0x03",
+  "length": 4,
+  "value_hex": "deadbeef",
+  "kind": "blob"
+}
+```
+
+---
+
+### 2.5 `hex` (legacy mode → also blob)
+
+```
+btccli segopsend "$ADDR" 0.001 "deadbeef" \
+'{"encoding":"hex","version":1,"p2sop":true}'
 ```
 
 ---
@@ -160,53 +186,56 @@ btccli segopsend "$ADDR" 0.001 "" \
 
 ## `getsegopdata "txid"`
 
-Returns only the segOP payload.
+Returns only the segOP payload, without other tx fields.
+
+### Example
 
 ```
-btccli getsegopdata "$TXID"  
+btccli getsegopdata "$TXID"
 ```
 
-### Output
+Output:
 
 ```
 {
-  "hex": "0109666972737420544c56...",
+  "hex": "0109666972737420...",
   "text": "first TLV"
-}  
+}
 ```
 
 ---
 
-# 4. Validation & Debug RPCs
+# 4. Developer Validation RPCs
 
 ## `segopvalidate "rawtxhex"`
-
-Runs segOP-specific validation checks:
-
-- Version correctness  
-- TLV structure  
-- P2SOP commitment match  
-- Length sanity checks  
-
 *(Developer builds only)*
 
+Checks:
+
+- segOP version  
+- TLV validity  
+- P2SOP commitment integrity  
+- Payload length rules  
+
+Usage:
+
 ```
-btccli segopvalidate "$RAW"  
+btccli segopvalidate "$RAW_TX"
 ```
 
 ---
 
-# 5. P2SOP Commitment RPCs (if enabled)
+# 5. P2SOP Helpers
 
 ## `getp2sop "rawtxhex"`
 
 Returns:
 
-- SHA256(payload)  
-- Full P2SOP script  
-- Commitment bytes  
+- Commitment hash  
+- P2SOP scriptPubKey  
 - Output index  
+- Raw bytes  
 
 ---
 
-**End of Document**
+# End of Document
