@@ -352,3 +352,9 @@ shows valid segOP structure:
   - text_multi: 3× TEXT TLVs (0x01) decoded correctly
   - json: {"foo":"bar","n":42} encoded as 0x02 TLV and decoded with kind="json"
   - blob: deadbeef encoded as 0x03 TLV and decoded with kind="blob"
+
+### 19-11-2025
+
+- Added strict segOP flag-validation logic: transactions now reject any reserved flag bits (0xFC mask), matching §3.2/§4 of the spec.
+- Confirmed via crafted raw-tx test that mempool correctly rejects reserved-bit transactions.
+- Behaviour validated: consensus enforcement works as intended; RPC decode returns generic failure (expected upstream behaviour).
