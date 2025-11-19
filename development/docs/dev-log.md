@@ -358,3 +358,6 @@ shows valid segOP structure:
 - Added strict segOP flag-validation logic: transactions now reject any reserved flag bits (0xFC mask), matching §3.2/§4 of the spec.
 - Confirmed via crafted raw-tx test that mempool correctly rejects reserved-bit transactions.
 - Behaviour validated: consensus enforcement works as intended; RPC decode returns generic failure (expected upstream behaviour).
+- Implemented consensus-level segOP ↔ P2SOP 1:1 coupling in tx_check.cpp (IsSegopP2SopOutput / CheckSegopP2SopCoupling)
+- Added TAGGED_HASH-based BuildSegopCommitmentBlob() in segop.h.
+- Verified via regtest that segOP transactions with "hello segop" payload are only accepted when they include the correct single P2SOP OP_RETURN commitment output and are mined successfully into blocks.
